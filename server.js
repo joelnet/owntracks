@@ -1,8 +1,12 @@
 import 'dotenv/config';
+import fs from 'node:fs';
+import path from 'node:path';
 import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { appendEntry } from './lib/store.js';
 import * as log from './lib/logger.js';
+import { loadConfig } from './lib/config.js';
+import { createPOIDetector } from './lib/poi.js';
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -10,7 +14,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir } = {}) {
+export function createApp({ username, password, dataDir, detector } = {}) {
   const app = express();
 
   app.use(express.json());
@@ -55,6 +59,14 @@ export function createApp({ username, password, dataDir } = {}) {
       received_at: new Date().toISOString(),
     };
 
+    // POI detection
+    if (detector && typeof entry.lat === 'number' && typeof entry.lon === 'number') {
+      const result = detector.detect(entry.lat, entry.lon);
+      if (result.changed) {
+        log.location(`Location: ${result.location}`);
+      }
+    }
+
     appendEntry(entry, dataDir);
     log.info(`Entry saved: user=${user} device=${device} type=${entry.type}`);
 
@@ -78,7 +90,27 @@ if (isDirectRun) {
     process.exit(1);
   }
 
-  const app = createApp({ username, password });
+  // Load config and create POI detector
+  const config = loadConfig(path.join(import.meta.dirname, 'config.yml'));
+  const detector = createPOIDetector(config);
+
+  // Seed detector state from location log
+  try {
+    const logContent = fs.readFileSync(log.LOCATION_LOG_PATH, 'utf-8');
+    const lines = logContent.trim().split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const match = lines[i].match(/Location: (.+)$/);
+      if (match) {
+        detector.setLocation(match[1]);
+        log.location(`Last known location: ${match[1]}`);
+        break;
+      }
+    }
+  } catch {
+    // No location log yet — default to Roaming
+  }
+
+  const app = createApp({ username, password, detector });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
