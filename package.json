@@ -1,0 +1,20 @@
+{
+  "name": "owntracks-journal",
+  "version": "1.0.0",
+  "description": "A self-hosted Node.js server that receives location data from the [OwnTracks](https://owntracks.org/) mobile app, detects visits to places, reverse geocodes them, and generates a personal location journal.",
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
+  }
+}
