@@ -61,7 +61,7 @@ activity:
 
 ### Detector Methods
 
-- `update(lat, lon, timestamp, vel)` — process a new point. Returns `{ changed, state, previousState }`.
+- `update(lat, lon, timestamp, vel)` — process a new point. Returns `{ changed, state, previousState, initialClassification }`. `initialClassification` is `true` only on the first transition out of `UNKNOWN` (silent, no notification, but signals the server to persist state).
 - `getState()` — returns current state string.
 - `setState(savedState)` — restore full state from persisted JSON (startup recovery).
 - `getFullState()` — returns the complete internal state for persistence.
@@ -71,8 +71,8 @@ activity:
 - `window` — array of recent points `{ lat, lon, timestamp, vel }`, capped at `window_size`
 - `currentState` — one of `UNKNOWN`, `STATIONARY`, `WALKING`, `DRIVING`
 - `dwellStart` — timestamp when speed first dropped below walking threshold, null if moving
-- `pendingState` — candidate state for debounce
-- `pendingCount` — consecutive points agreeing on the pending state
+- `pendingState` — candidate state for debounce (initially `null`)
+- `pendingCount` — consecutive points agreeing on the pending state (initially `0`)
 
 ## State Machine
 
@@ -84,7 +84,7 @@ Four states: `UNKNOWN`, `STATIONARY`, `WALKING`, `DRIVING`.
 2. Add to window. Drop oldest if at capacity. The window is sorted by timestamp after insertion to handle out-of-order points (OwnTracks can batch/queue points during connectivity loss).
 3. If window is not full, remain in `UNKNOWN`. Return `{ changed: false }`.
 4. Calculate **median speed** across the window:
-   - For each consecutive pair `(p[i], p[i+1])`, compute `calculated_speed = haversineDistance(p[i], p[i+1]) / timeDelta` converted to km/h.
+   - For each consecutive pair `(p[i], p[i+1])`, compute `calculated_speed = (haversineDistance(p[i].lat, p[i].lon, p[i+1].lat, p[i+1].lon) / timeDelta) * 3.6` to convert m/s to km/h.
    - If `timeDelta` between a pair is 0, skip that pair (avoid division by zero).
    - Treat `vel` as 0 when it is missing, null, negative, or non-numeric.
    - For each pair, take `max(calculated_speed, p[i+1].vel)` as that segment's speed. This yields N-1 speed values for a window of N points.
@@ -95,8 +95,8 @@ Four states: `UNKNOWN`, `STATIONARY`, `WALKING`, `DRIVING`.
    - median >= `walking_max_kmh` → candidate = `WALKING` (the zone between `walking_max_kmh` and `driving_min_kmh` covers cycling, running, slow traffic — classified as walking)
    - median < `walking_max_kmh` → check dwell timer (step 6)
 6. **Dwell timer:** When median speed is below `walking_max_kmh`:
-   - If `dwellStart` is null, set it to the current timestamp.
-   - If `now - dwellStart >= dwell_threshold_minutes`, candidate = `STATIONARY`.
+   - If `dwellStart` is null, set it to the point's `timestamp` (GPS time, not wall-clock time).
+   - If `timestamp - dwellStart >= dwell_threshold_minutes * 60` (comparing seconds), candidate = `STATIONARY`.
    - Otherwise, candidate = `WALKING` (avoids false stationary at traffic lights).
    - When median speed rises to or above `walking_max_kmh`, reset `dwellStart` to null.
    - Note: the effective time to reach `STATIONARY` is approximately `dwell_threshold_minutes` + 2 reporting intervals, because the debounce (step 7) requires 2 consecutive agreeing points after the dwell timer fires.
@@ -176,7 +176,7 @@ After POI detection:
 6. Store entry (existing)
 ```
 
-Only `_type: "location"` entries are fed to the activity detector. Transition events and other OwnTracks message types are skipped.
+Only entries with `type: 'location'` (after the server's destructuring of OwnTracks' `_type` field) are fed to the activity detector. Transition events and other OwnTracks message types are skipped.
 
 ### Persistence Ownership
 
