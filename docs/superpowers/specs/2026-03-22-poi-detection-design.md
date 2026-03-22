@@ -26,7 +26,14 @@ poi:
 
 ## New Module: `lib/config.js`
 
-Loads and parses `config.yml` using the `yaml` npm package (standard YAML parser for Node.js). Exports a function that reads the file synchronously at startup and returns the parsed config object. Validates that required fields are present.
+Loads and parses `config.yml` using the `yaml` npm package (standard YAML parser for Node.js). Exports a function that reads the file synchronously at startup and returns the parsed config object.
+
+Validation rules:
+- `poi` key must exist and be an object
+- `poi.default_radius_m` must be a positive number
+- `poi.locations` must be a non-empty array
+- Each location must have `name` (string), `lat` (number, -90 to 90), `lon` (number, -180 to 180)
+- Optional `radius_m` must be a positive number if present
 
 ## New Module: `lib/poi.js`
 
@@ -47,22 +54,29 @@ If a point falls within the radius of multiple POIs, the first match in config o
 
 ## Integration: `server.js`
 
+### Dependency Injection
+
+The POI detector is passed into `createApp` as an optional parameter: `createApp({ username, password, dataDir, detector })`. When `detector` is `null` or `undefined`, POI detection is skipped. This preserves testability — existing server tests call `createApp` without a detector and continue to pass unchanged. POI-specific integration tests can inject a test detector.
+
 ### Startup
 
 1. Import and call `lib/config.js` to load `config.yml`
 2. Create a POI detector instance via `createPOIDetector(config)`
+3. Pass the detector into `createApp`
 
 ### Request Handling (`POST /pub`)
 
 After authentication, before storage:
 
-1. If the entry has `lat` and `lon` fields, call `detector.detect(lat, lon)`
+1. If a detector is present and the entry has `lat` and `lon` fields, call `detector.detect(lat, lon)`
 2. If `changed` is `true`, log the transition: `Location: Home` or `Location: Roaming`
 3. Proceed to storage as normal — **no changes to stored data format**
 
-Entries without `lat`/`lon` (e.g., `_type: "transition"`) skip POI detection entirely.
+Entries without `lat`/`lon` (e.g., `_type: "transition"`) skip POI detection entirely — no error, no state change.
 
 The detector is a single per-process instance. This is a single-user system (one OwnTracks device), so no per-user state management is needed.
+
+**Note on restarts:** Detector state lives in memory (initialized to `null`). On server restart, the first location report always triggers a log entry even if the user hasn't moved. This is accepted behavior.
 
 ## Log Output
 
@@ -87,9 +101,13 @@ Location is only logged on state transitions. Repeated detections at the same lo
 
 - Point inside radius returns correct POI name
 - Point outside all POIs returns `"Roaming"`
-- `changed` is `true` only on state transitions (Home → Roaming, Roaming → Home)
+- First detection at a POI returns `changed: true` (null → Home)
+- First detection while roaming returns `changed: true` (null → Roaming)
+- `changed` is `true` on state transitions (Home → Roaming, Roaming → Home)
 - `changed` is `false` for repeated same-location detections
 - Per-POI `radius_m` override takes precedence over `default_radius_m`
+- When a point falls within multiple POI radii, the first POI in config order is returned
+- Entries without lat/lon skip detection (no error, no state change)
 - Haversine accuracy: verify known distance between two real-world coordinates
 
 ### `lib/__tests__/config.test.js`
