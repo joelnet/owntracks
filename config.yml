@@ -4,3 +4,6 @@ poi:
     - name: Home
       lat: 34.0170901
       lon: -117.9025897
+    - name: Target
+      lat: 34.0297163
+      lon: -117.9190439
