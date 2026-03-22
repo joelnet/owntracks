@@ -45,12 +45,13 @@ activity:
 ### Validation Rules
 
 - `activity` section is optional. If missing, activity detection is off.
+- When the `activity` section is present, **all fields are required**.
 - `enabled` and `discord_notifications` must be booleans.
 - `dwell_threshold_minutes` must be a positive number.
 - `walking_max_kmh` must be a positive number.
 - `driving_min_kmh` must be a positive number.
 - `walking_max_kmh` must be less than `driving_min_kmh`.
-- `window_size` must be an integer >= 2.
+- `window_size` must be an integer >= 3 (minimum for meaningful median calculation).
 
 ## Module: `lib/activity.js`
 
@@ -79,23 +80,26 @@ Four states: `UNKNOWN`, `STATIONARY`, `WALKING`, `DRIVING`.
 
 ### Per-Update Flow
 
-1. New point arrives with `lat`, `lon`, `timestamp`, `vel`.
-2. Add to window. Drop oldest if at capacity.
+1. New point arrives with `lat`, `lon`, `timestamp`, `vel`. Treat `vel` as 0 when missing, null, negative, or non-numeric.
+2. Add to window. Drop oldest if at capacity. The window is sorted by timestamp after insertion to handle out-of-order points (OwnTracks can batch/queue points during connectivity loss).
 3. If window is not full, remain in `UNKNOWN`. Return `{ changed: false }`.
 4. Calculate **median speed** across the window:
-   - For each consecutive pair of points, compute speed as `haversineDistance(p1, p2) / timeDelta` (m/s → km/h).
-   - Also consider the OwnTracks `vel` field for each point.
-   - For each point, take the **higher** of reported `vel` and calculated speed (cross-check against stale `vel` values).
-   - Take the **median** of these values across the window.
-5. Classify candidate state:
-   - median >= `driving_min_kmh` → `DRIVING`
-   - median < `driving_min_kmh` → `WALKING` (the in-transit zone between walking_max and driving_min rounds down)
-   - median < `walking_max_kmh` → check dwell timer
-6. **Dwell timer:** When median speed drops below `walking_max_kmh`:
+   - For each consecutive pair `(p[i], p[i+1])`, compute `calculated_speed = haversineDistance(p[i], p[i+1]) / timeDelta` converted to km/h.
+   - If `timeDelta` between a pair is 0, skip that pair (avoid division by zero).
+   - Treat `vel` as 0 when it is missing, null, negative, or non-numeric.
+   - For each pair, take `max(calculated_speed, p[i+1].vel)` as that segment's speed. This yields N-1 speed values for a window of N points.
+   - If no valid pairs exist (all skipped), do not classify — remain in current state and return `{ changed: false }`.
+   - Take the **median** of the valid speed values.
+5. Classify candidate state (evaluated top-to-bottom, first match wins):
+   - median >= `driving_min_kmh` → candidate = `DRIVING`
+   - median >= `walking_max_kmh` → candidate = `WALKING` (the zone between `walking_max_kmh` and `driving_min_kmh` covers cycling, running, slow traffic — classified as walking)
+   - median < `walking_max_kmh` → check dwell timer (step 6)
+6. **Dwell timer:** When median speed is below `walking_max_kmh`:
    - If `dwellStart` is null, set it to the current timestamp.
-   - If `now - dwellStart >= dwell_threshold_minutes`, candidate is `STATIONARY`.
-   - Otherwise, candidate remains `WALKING` (avoids false stationary at traffic lights).
-   - When median speed rises above `walking_max_kmh`, reset `dwellStart` to null.
+   - If `now - dwellStart >= dwell_threshold_minutes`, candidate = `STATIONARY`.
+   - Otherwise, candidate = `WALKING` (avoids false stationary at traffic lights).
+   - When median speed rises to or above `walking_max_kmh`, reset `dwellStart` to null.
+   - Note: the effective time to reach `STATIONARY` is approximately `dwell_threshold_minutes` + 2 reporting intervals, because the debounce (step 7) requires 2 consecutive agreeing points after the dwell timer fires.
 7. **Debounce:** Compare candidate with `pendingState`.
    - If same: increment `pendingCount`.
    - If different: reset `pendingState` to candidate, `pendingCount` = 1.
@@ -104,7 +108,9 @@ Four states: `UNKNOWN`, `STATIONARY`, `WALKING`, `DRIVING`.
 
 ### Initial Classification
 
-The first classification after the window fills transitions from `UNKNOWN` to the detected state **silently** — `changed` returns `false` to suppress the notification. This avoids "Now Stationary" on every server restart.
+The first classification after the window fills transitions from `UNKNOWN` to the detected state **silently** — `changed` returns `false` to suppress the notification. This avoids "Now Stationary" on every server restart. The state is still persisted to disk on this initial classification so it survives a subsequent restart.
+
+Transitions from `UNKNOWN` never generate Discord notifications (whether from initial classification or state recovery edge cases).
 
 ## Discord Notifications
 
@@ -119,7 +125,9 @@ When `activity.discord_notifications` is `true` and a state transition occurs:
 | `DRIVING → WALKING` | `Now Walking` |
 | `DRIVING → STATIONARY` | `Now Stationary` |
 
-Activity notifications fire regardless of POI status (at a POI or roaming). Activity and POI notifications are independent — both can fire on the same point.
+Transitions from `UNKNOWN` do not generate notifications. Activity notifications fire regardless of POI status (at a POI or roaming). Activity and POI notifications are independent — both can fire on the same point.
+
+State names are title-cased in notification messages (e.g. `DRIVING` → `"Driving"`).
 
 ## State Persistence
 
@@ -138,7 +146,7 @@ Activity notifications fire regardless of POI status (at a POI or roaming). Acti
 }
 ```
 
-- Written on every state change (`changed: true`), not on every point.
+- Written on every state change (`changed: true`) and on the silent initial classification (when transitioning out of `UNKNOWN`). Not written on every point.
 - On startup: if file exists and is valid JSON, load and restore full state via `setState()`. Detector resumes exactly where it left off.
 - If file is missing or corrupt: start fresh in `UNKNOWN`.
 
@@ -158,13 +166,21 @@ After POI detection:
 
 ```
 1. POI detect (existing)
-2. If activity detector exists and entry has lat/lon:
+2. If activity detector exists and entry.type === 'location' and entry has lat/lon:
      result = activity.update(lat, lon, tst, vel)
-3. If result.changed && config.activity.discord_notifications:
-     discord.notify(`Now ${result.state}`)
-4. POI notification (existing, unchanged)
-5. Store entry (existing)
+3. If result.changed or result.initialClassification:
+     write activity.getFullState() to data/activity-state.json
+4. If result.changed && config.activity.discord_notifications:
+     discord.notify(`Now ${titleCase(result.state)}`)
+5. POI notification (existing, unchanged)
+6. Store entry (existing)
 ```
+
+Only `_type: "location"` entries are fed to the activity detector. Transition events and other OwnTracks message types are skipped.
+
+### Persistence Ownership
+
+`server.js` is responsible for reading and writing the state file (consistent with how POI state recovery works). The activity detector itself has no knowledge of the file path — it exposes `getFullState()` and `setState()` for the server to use.
 
 ### Dependency
 
@@ -182,6 +198,11 @@ Uses `haversineDistance` from `lib/poi.js` for calculated speed between consecut
 - **Debounce:** Single-point speed spikes do not trigger transitions.
 - **State persistence round-trip:** `getFullState()` → `setState()` restores identical behavior.
 - **Cross-check:** Calculated speed used when `vel` is stale/zero.
+- **Missing/invalid vel:** Treats missing, null, negative vel as 0.
+- **Zero time delta:** Skips pairs with identical timestamps.
+- **Out-of-order points:** Window sorts by timestamp, produces correct speeds.
+- **Initial classification persists:** State file written on first classification even though `changed` is false.
+- **Only location type:** Non-location entries (transitions, waypoints) are not processed.
 
 ### `lib/__tests__/config.test.js` (additions)
 
@@ -189,7 +210,7 @@ Uses `haversineDistance` from `lib/poi.js` for calculated speed between consecut
 - Missing activity section is allowed (feature off).
 - Invalid types rejected (non-boolean enabled, non-number thresholds).
 - `walking_max_kmh >= driving_min_kmh` rejected.
-- `window_size < 2` rejected.
+- `window_size < 3` rejected.
 
 ### `__tests__/server.test.js` (additions)
 
