@@ -80,8 +80,13 @@ if (isDirectRun) {
   }
 
   const app = createApp({ username, password });
-  app.listen(port, () => {
+  const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
     console.log(`OwnTracks receiver listening on port ${port}`);
+  });
+
+  process.once('SIGUSR2', () => {
+    log.info('Server shutting down (nodemon restart)');
+    server.close(() => process.kill(process.pid, 'SIGUSR2'));
   });
 }

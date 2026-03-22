@@ -1,9 +1,12 @@
-import { describe, it, before, beforeEach, afterEach } from 'node:test';
+import { describe, it, before, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
-import request from 'supertest';
-import { createApp } from '../server.js';
+
+mock.module('../lib/logger.js', { namedExports: { info() {}, error() {} } });
+
+const { createApp } = await import('../server.js');
+const { default: request } = await import('supertest');
 
 const TEST_DATA_DIR = path.join(import.meta.dirname, '../data-test-server');
 const TEST_USER = 'joel';
