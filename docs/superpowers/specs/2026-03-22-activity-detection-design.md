@@ -40,7 +40,7 @@ activity:
 | `dwell_threshold_minutes` | number | — | Minutes below walking speed before classifying as stationary |
 | `walking_max_kmh` | number | — | Speed ceiling for walking; speeds between this and `driving_min_kmh` classify as walking |
 | `driving_min_kmh` | number | — | Speed floor for driving |
-| `window_size` | integer >= 2 | — | Number of recent points in the sliding window |
+| `window_size` | integer >= 3 | — | Number of recent points in the sliding window |
 
 ### Validation Rules
 
