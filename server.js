@@ -75,14 +75,12 @@ if (isDirectRun) {
 
   if (!username || !password) {
     log.error('OWNTRACKS_USERNAME and OWNTRACKS_PASSWORD must be set in .env');
-    console.error('OWNTRACKS_USERNAME and OWNTRACKS_PASSWORD must be set in .env');
     process.exit(1);
   }
 
   const app = createApp({ username, password });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
-    console.log(`OwnTracks receiver listening on port ${port}`);
   });
 
   process.once('SIGUSR2', () => {
