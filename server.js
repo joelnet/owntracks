@@ -14,7 +14,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector } = {}) {
+export function createApp({ username, password, dataDir, detector, discord } = {}) {
   const app = express();
 
   app.use(express.json());
@@ -68,6 +68,13 @@ export function createApp({ username, password, dataDir, detector } = {}) {
       const result = detector.detect(entry.lat, entry.lon);
       if (result.changed) {
         log.location(`Location: ${result.location}`);
+
+        if (discord) {
+          const message = result.location === 'Roaming'
+            ? `Left ${result.previousLocation} (now Roaming)`
+            : `Arrived at ${result.location}`;
+          discord.notify(message);
+        }
       }
     }
 

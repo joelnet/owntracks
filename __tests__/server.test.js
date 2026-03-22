@@ -135,4 +135,71 @@ describe('POST /pub', () => {
     assert.equal(res.status, 200);
     assert.equal(locationCalls.length, 0);
   });
+
+  it('calls discord.notify on POI transition', async () => {
+    const notified = [];
+    const detector = {
+      detect: () => ({ changed: true, location: 'Home', previousLocation: 'Roaming' }),
+    };
+    const discord = {
+      notify: (msg) => notified.push(msg),
+    };
+    const appWithDiscord = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      discord,
+    });
+    await request(appWithDiscord)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.017, lon: -117.902 });
+    assert.equal(notified.length, 1);
+    assert.equal(notified[0], 'Arrived at Home');
+  });
+
+  it('sends "Left" message when transitioning to Roaming', async () => {
+    const notified = [];
+    const detector = {
+      detect: () => ({ changed: true, location: 'Roaming', previousLocation: 'Home' }),
+    };
+    const discord = {
+      notify: (msg) => notified.push(msg),
+    };
+    const appWithDiscord = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      discord,
+    });
+    await request(appWithDiscord)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.021, lon: -117.902 });
+    assert.equal(notified[0], 'Left Home (now Roaming)');
+  });
+
+  it('does not call discord.notify when no transition', async () => {
+    const notified = [];
+    const detector = {
+      detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
+    };
+    const discord = {
+      notify: (msg) => notified.push(msg),
+    };
+    const appWithDiscord = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      discord,
+    });
+    await request(appWithDiscord)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.017, lon: -117.902 });
+    assert.equal(notified.length, 0);
+  });
 });
