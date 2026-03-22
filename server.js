@@ -7,6 +7,7 @@ import { appendEntry } from "./lib/store.js";
 import * as log from "./lib/logger.js";
 import { loadConfig } from "./lib/config.js";
 import { createPOIDetector } from "./lib/poi.js";
+import { createDiscordClient } from "./lib/discord.js";
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -123,13 +124,25 @@ if (isDirectRun) {
   }
   log.location(`Last known location: ${lastLocation}`);
 
-  const app = createApp({ username, password, detector });
+  // Initialize Discord bot (optional)
+  let discord;
+  const discordToken = process.env.DISCORD_TOKEN;
+  const discordChannelId = process.env.DISCORD_CHANNEL_ID;
+  const discordGuildId = process.env.DISCORD_GUILD_ID;
+
+  if (discordToken && discordChannelId && discordGuildId) {
+    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector });
+    discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
+  }
+
+  const app = createApp({ username, password, detector, discord });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
 
   process.once("SIGUSR2", () => {
     log.info("Server shutting down (nodemon restart)");
+    if (discord) discord.destroy();
     server.close(() => process.kill(process.pid, "SIGUSR2"));
   });
 }
