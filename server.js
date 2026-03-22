@@ -95,20 +95,22 @@ if (isDirectRun) {
   const detector = createPOIDetector(config);
 
   // Seed detector state from location log
+  let lastLocation = 'Roaming';
   try {
     const logContent = fs.readFileSync(log.LOCATION_LOG_PATH, 'utf-8');
     const lines = logContent.trim().split('\n');
     for (let i = lines.length - 1; i >= 0; i--) {
       const match = lines[i].match(/Location: (.+)$/);
       if (match) {
-        detector.setLocation(match[1]);
-        log.location(`Last known location: ${match[1]}`);
+        lastLocation = match[1];
+        detector.setLocation(lastLocation);
         break;
       }
     }
   } catch {
     // No location log yet — default to Roaming
   }
+  log.location(`Last known location: ${lastLocation}`);
 
   const app = createApp({ username, password, detector });
   const server = app.listen(port, () => {
