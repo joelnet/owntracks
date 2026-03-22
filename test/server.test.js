@@ -1,4 +1,4 @@
-import { describe, it, before, after, beforeEach, afterEach } from 'node:test';
+import { describe, it, before, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -95,6 +95,14 @@ describe('POST /pub', () => {
       .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
       .set('Content-Type', 'text/plain')
       .send('not json');
+    assert.equal(res.status, 400);
+  });
+
+  it('returns 400 for a JSON array body', async () => {
+    const res = await request(app)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send([{ _type: 'location' }]);
     assert.equal(res.status, 400);
   });
 });

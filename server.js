@@ -1,6 +1,13 @@
 import 'dotenv/config';
+import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { appendEntry } from './lib/store.js';
+
+function safeEqual(a, b) {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
+}
 
 export function createApp({ username, password, dataDir } = {}) {
   const app = express();
@@ -23,12 +30,12 @@ export function createApp({ username, password, dataDir } = {}) {
     const user = decoded.slice(0, colonIndex);
     const pass = decoded.slice(colonIndex + 1);
 
-    if (user !== username || pass !== password) {
+    if (!safeEqual(user, username) || !safeEqual(pass, password)) {
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
     // Validate body
-    if (!req.body || typeof req.body !== 'object') {
+    if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
       return res.status(400).json({ error: 'Bad request' });
     }
 
