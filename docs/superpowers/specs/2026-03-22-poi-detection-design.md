@@ -43,14 +43,20 @@ Implements the Haversine formula to compute great-circle distance in meters betw
 
 ### POI Detector
 
-- **`createPOIDetector(config)`** — factory function that takes the parsed config object and returns a detector instance. Internal state tracks the last known location name (initialized to `null`).
+- **`createPOIDetector(config)`** — factory function that takes the parsed config object and returns a detector instance. Internal state tracks the last known location name (initialized to `"Roaming"`).
 
 - **`detector.detect(lat, lon)`** — checks the incoming coordinates against all configured POIs using Haversine distance. Returns `{ changed: boolean, location: string }`:
   - `location` is the matching POI `name`, or `"Roaming"` if no POI matches
   - `changed` is `true` when location differs from the previous detection
-  - First detection always counts as a change (from `null` to a value)
+  - Since state starts as `"Roaming"`, the first detection only triggers a change if the user is at a POI
+
+- **`detector.setLocation(name)`** — seeds the detector's last known location state. Used at startup to restore state from logs.
 
 If a point falls within the radius of multiple POIs, the first match in config order wins.
+
+### Startup State Recovery
+
+At startup, the server reads the most recent log file (today's, or yesterday's if today's doesn't exist) and scans for the last line matching `Location: <name>`. If found, calls `detector.setLocation(name)` and logs `Last known location: <name>`. This is a simple reverse scan of a single text file — no new dependencies needed.
 
 ## Integration: `server.js`
 
@@ -62,7 +68,8 @@ The POI detector is passed into `createApp` as an optional parameter: `createApp
 
 1. Import and call `lib/config.js` to load `config.yml`
 2. Create a POI detector instance via `createPOIDetector(config)`
-3. Pass the detector into `createApp`
+3. Read the most recent log file to find the last `Location: <name>` entry and seed the detector's state. If found, log: `Last known location: Home`. If no prior location log exists, state remains `"Roaming"` (the default).
+4. Pass the detector into `createApp`
 
 ### Request Handling (`POST /pub`)
 
@@ -76,14 +83,14 @@ Entries without `lat`/`lon` (e.g., `_type: "transition"`) skip POI detection ent
 
 The detector is a single per-process instance. This is a single-user system (one OwnTracks device), so no per-user state management is needed.
 
-**Note on restarts:** Detector state lives in memory (initialized to `null`). On server restart, the first location report always triggers a log entry even if the user hasn't moved. This is accepted behavior.
+**On restarts:** Detector state is seeded from the last `Location:` entry in the most recent log file. This prevents a false transition log on restart when the user hasn't moved. If no log history exists, defaults to `"Roaming"`.
 
 ## Log Output
 
 Location changes appear as standard INFO log entries:
 
 ```
-2026-03-22T01:00:35.103Z [INFO] Location: Home
+2026-03-22T01:00:00.000Z [INFO] Last known location: Home
 2026-03-22T01:15:22.456Z [INFO] Location: Roaming
 2026-03-22T02:30:11.789Z [INFO] Location: Home
 ```
@@ -101,8 +108,9 @@ Location is only logged on state transitions. Repeated detections at the same lo
 
 - Point inside radius returns correct POI name
 - Point outside all POIs returns `"Roaming"`
-- First detection at a POI returns `changed: true` (null → Home)
-- First detection while roaming returns `changed: true` (null → Roaming)
+- Default state is `"Roaming"` — first detection while roaming returns `changed: false`
+- First detection at a POI returns `changed: true` (Roaming → Home)
+- `setLocation` seeds state — subsequent matching detection returns `changed: false`
 - `changed` is `true` on state transitions (Home → Roaming, Roaming → Home)
 - `changed` is `false` for repeated same-location detections
 - Per-POI `radius_m` override takes precedence over `default_radius_m`
