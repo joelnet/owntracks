@@ -8,3 +8,11 @@ poi:
     - name: Target
       lat: 34.0297163
       lon: -117.9190439
+
+activity:
+  enabled: true
+  discord_notifications: true
+  dwell_threshold_minutes: 5
+  walking_max_kmh: 7
+  driving_min_kmh: 25
+  window_size: 5
