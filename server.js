@@ -15,7 +15,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector, discord } = {}) {
+export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist } = {}) {
   const app = express();
 
   app.use(express.json());
@@ -76,6 +76,31 @@ export function createApp({ username, password, dataDir, detector, discord } = {
             : `Arrived at ${result.location}`;
           discord.notify(message);
         }
+      }
+    }
+
+    // Activity detection
+    if (
+      activity &&
+      entry.type === "location" &&
+      typeof entry.lat === "number" &&
+      typeof entry.lon === "number"
+    ) {
+      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
+
+      if (activityResult.changed || activityResult.initialClassification) {
+        if (onActivityPersist) {
+          try {
+            onActivityPersist(activity.getFullState());
+          } catch (err) {
+            log.error(`Failed to persist activity state: ${err.message}`);
+          }
+        }
+      }
+
+      if (activityResult.changed && activityConfig?.discord_notifications && discord) {
+        const stateName = activityResult.state.charAt(0) + activityResult.state.slice(1).toLowerCase();
+        discord.notify(`Now ${stateName}`);
       }
     }
 
