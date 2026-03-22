@@ -8,6 +8,7 @@ import * as log from "./lib/logger.js";
 import { loadConfig } from "./lib/config.js";
 import { createPOIDetector } from "./lib/poi.js";
 import { createDiscordClient } from "./lib/discord.js";
+import { createActivityDetector } from "./lib/activity.js";
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -160,7 +161,32 @@ if (isDirectRun) {
     discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
 
-  const app = createApp({ username, password, detector, discord });
+  // Initialize activity detector (optional)
+  let activity;
+  let activityConfig;
+  let onActivityPersist;
+  if (config.activity?.enabled) {
+    activityConfig = config.activity;
+    activity = createActivityDetector(activityConfig);
+
+    // Restore persisted state
+    const activityStatePath = path.join(import.meta.dirname, "data", "activity-state.json");
+    try {
+      const saved = JSON.parse(fs.readFileSync(activityStatePath, "utf-8"));
+      activity.setState(saved);
+      log.info(`Activity state restored: ${saved.currentState}`);
+    } catch {
+      log.info("No activity state to restore — starting fresh");
+    }
+
+    onActivityPersist = (state) => {
+      const dir = path.join(import.meta.dirname, "data");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "activity-state.json"), JSON.stringify(state), "utf-8");
+    };
+  }
+
+  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
