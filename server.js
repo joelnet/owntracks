@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { timingSafeEqual } from 'node:crypto';
 import express from 'express';
 import { appendEntry } from './lib/store.js';
+import * as log from './lib/logger.js';
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -18,6 +19,7 @@ export function createApp({ username, password, dataDir } = {}) {
     // Validate Basic Auth
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Basic ')) {
+      log.error('Missing or invalid Authorization header');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
@@ -31,11 +33,13 @@ export function createApp({ username, password, dataDir } = {}) {
     const pass = decoded.slice(colonIndex + 1);
 
     if (!safeEqual(user, username) || !safeEqual(pass, password)) {
+      log.error(`Failed auth attempt for user: ${user}`);
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
     // Validate body
     if (!req.body || typeof req.body !== 'object' || Array.isArray(req.body)) {
+      log.error('Invalid request body');
       return res.status(400).json({ error: 'Bad request' });
     }
 
@@ -52,6 +56,7 @@ export function createApp({ username, password, dataDir } = {}) {
     };
 
     appendEntry(entry, dataDir);
+    log.info(`Entry saved: user=${user} device=${device} type=${entry.type}`);
 
     return res.status(200).json([]);
   });
@@ -69,12 +74,14 @@ if (isDirectRun) {
   const password = process.env.OWNTRACKS_PASSWORD;
 
   if (!username || !password) {
+    log.error('OWNTRACKS_USERNAME and OWNTRACKS_PASSWORD must be set in .env');
     console.error('OWNTRACKS_USERNAME and OWNTRACKS_PASSWORD must be set in .env');
     process.exit(1);
   }
 
   const app = createApp({ username, password });
   app.listen(port, () => {
+    log.info(`Server started on port ${port}`);
     console.log(`OwnTracks receiver listening on port ${port}`);
   });
 }
