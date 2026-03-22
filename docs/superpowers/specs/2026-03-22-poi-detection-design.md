@@ -56,7 +56,7 @@ If a point falls within the radius of multiple POIs, the first match in config o
 
 ### Startup State Recovery
 
-At startup, the server reads the most recent log file (today's, or yesterday's if today's doesn't exist) and scans for the last line matching `Location: <name>`. If found, calls `detector.setLocation(name)` and logs `Last known location: <name>`. This is a simple reverse scan of a single text file — no new dependencies needed.
+At startup, the server reads `logs/location.log` and finds the last line matching `Location: <name>`. If found, calls `detector.setLocation(name)` and logs `Last known location: <name>`. Since location transitions are in a single file (no daily rotation), this is a simple scan — no new dependencies needed.
 
 ## Integration: `server.js`
 
@@ -68,7 +68,7 @@ The POI detector is passed into `createApp` as an optional parameter: `createApp
 
 1. Import and call `lib/config.js` to load `config.yml`
 2. Create a POI detector instance via `createPOIDetector(config)`
-3. Read the most recent log file to find the last `Location: <name>` entry and seed the detector's state. If found, log: `Last known location: Home`. If no prior location log exists, state remains `"Roaming"` (the default).
+3. Read `logs/location.log` to find the last `Location: <name>` entry and seed the detector's state. If found, log: `Last known location: Home`. If no prior location log exists, state remains `"Roaming"` (the default).
 4. Pass the detector into `createApp`
 
 ### Request Handling (`POST /pub`)
@@ -83,11 +83,16 @@ Entries without `lat`/`lon` (e.g., `_type: "transition"`) skip POI detection ent
 
 The detector is a single per-process instance. This is a single-user system (one OwnTracks device), so no per-user state management is needed.
 
-**On restarts:** Detector state is seeded from the last `Location:` entry in the most recent log file. This prevents a false transition log on restart when the user hasn't moved. If no log history exists, defaults to `"Roaming"`.
+**On restarts:** Detector state is seeded from the last `Location:` entry in `logs/location.log`. This prevents a false transition log on restart when the user hasn't moved. If no log history exists, defaults to `"Roaming"`.
 
 ## Log Output
 
-Location changes appear as standard INFO log entries:
+Two separate log files:
+
+- **`logs/YYYY-MM-DD.log`** — application log (server events, errors, "Entry saved" messages). Existing behavior, unchanged.
+- **`logs/location.log`** — location transitions only. Single file, no daily rotation. Lightweight and easy to scan for startup recovery.
+
+Location log entries:
 
 ```
 2026-03-22T01:00:00.000Z [INFO] Last known location: Home
@@ -95,7 +100,7 @@ Location changes appear as standard INFO log entries:
 2026-03-22T02:30:11.789Z [INFO] Location: Home
 ```
 
-Location is only logged on state transitions. Repeated detections at the same location produce no log output.
+Location transitions are written to `location.log` (and echoed to console). They are **not** written to the daily app log. Location is only logged on state transitions — repeated detections at the same location produce no log output.
 
 ## Dependencies
 
@@ -137,6 +142,7 @@ Server integration tests continue to pass. Config loading is handled gracefully 
 | `lib/poi.js` | **New** — Haversine + POI detector |
 | `lib/__tests__/poi.test.js` | **New** — POI detector tests |
 | `lib/__tests__/config.test.js` | **New** — Config loader tests |
+| `lib/logger.js` | **Modified** — add location log writer (`logs/location.log`, single file) |
 | `server.js` | **Modified** — import config + POI detector, add detection in handler |
 | `package.json` | **Modified** — add `yaml` dependency |
 
