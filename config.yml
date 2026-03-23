@@ -2,6 +2,7 @@ max_accuracy_m: 30
 
 poi:
   default_radius_m: 100
+  min_transition_points: 3
   locations:
     - name: Home
       lat: 34.0170901
@@ -18,3 +19,4 @@ activity:
   walking_max_kmh: 7
   driving_min_kmh: 25
   window_size: 5
+  min_transition_seconds: 120
