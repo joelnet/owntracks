@@ -198,4 +198,35 @@ for (const span of locationSpans) {
 for (const [loc, secs] of Object.entries(totals).sort((a, b) => b[1] - a[1])) {
   console.log(`  ${loc.padEnd(20)} ${formatDuration(secs)}`);
 }
+
+// --- Activity summary ---
+
+if (activity) {
+  console.log();
+  console.log('Activity Summary');
+  console.log('-'.repeat(30));
+
+  const activitySpans = [];
+  let currentAct = events[0].activity || events[0].state || 'UNKNOWN';
+  let actSpanStart = dayEntries[0].tst;
+
+  for (const ev of events) {
+    if (ev.type === 'activity') {
+      activitySpans.push({ state: currentAct, start: actSpanStart, end: ev.tst });
+      currentAct = ev.state;
+      actSpanStart = ev.tst;
+    }
+  }
+  activitySpans.push({ state: currentAct, start: actSpanStart, end: dayEntries[dayEntries.length - 1].tst });
+
+  const actTotals = {};
+  for (const span of activitySpans) {
+    actTotals[span.state] = (actTotals[span.state] || 0) + (span.end - span.start);
+  }
+
+  for (const [state, secs] of Object.entries(actTotals).sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${fmtState(state).padEnd(20)} ${formatDuration(secs)}`);
+  }
+}
+
 console.log();
