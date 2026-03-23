@@ -89,7 +89,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
     ) {
       const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
 
-      if (activityResult.changed || activityResult.initialClassification) {
+      if (activityResult.changed || activityResult.initialClassification || activityResult.gapTransition) {
         if (onActivityPersist) {
           try {
             onActivityPersist(activity.getFullState());
@@ -97,6 +97,10 @@ export function createApp({ username, password, dataDir, detector, discord, acti
             log.error(`Failed to persist activity state: ${err.message}`);
           }
         }
+      }
+
+      if (activityResult.gapTransition && activityConfig?.discord_notifications && discord) {
+        discord.notify('Now Stationary');
       }
 
       if (activityResult.changed && activityConfig?.discord_notifications && discord) {
