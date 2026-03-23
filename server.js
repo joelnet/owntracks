@@ -16,7 +16,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist } = {}) {
+export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, maxAccuracy } = {}) {
   const app = express();
 
   app.use(express.json());
@@ -61,6 +61,13 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       received_at: new Date().toISOString(),
     };
 
+    // Skip low-accuracy GPS readings before any detection
+    if (maxAccuracy && typeof entry.acc === 'number' && entry.acc > maxAccuracy) {
+      appendEntry(entry, dataDir);
+      log.info(`Entry saved (skipped detection, acc=${entry.acc}): user=${user} device=${device} type=${entry.type}`);
+      return res.status(200).json([]);
+    }
+
     // POI detection
     if (
       detector &&
@@ -87,7 +94,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel, entry.acc);
+      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
 
       if (activityResult.changed || activityResult.initialClassification || activityResult.gapTransition) {
         if (onActivityPersist) {
@@ -190,7 +197,8 @@ if (isDirectRun) {
     };
   }
 
-  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist });
+  const maxAccuracy = config.max_accuracy_m;
+  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, maxAccuracy });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });

@@ -57,8 +57,10 @@ function adjacentDate(dateStr, offset) {
 const fileDates = [adjacentDate(date, -1), date, adjacentDate(date, 1)];
 const allEntries = fileDates.flatMap(d => readJSONL(path.join(dataDir, `${d}.jsonl`)));
 
+const maxAccuracy = config.max_accuracy_m;
 const locationEntries = allEntries
   .filter(e => e.type === 'location' && typeof e.lat === 'number' && typeof e.lon === 'number')
+  .filter(e => !maxAccuracy || typeof e.acc !== 'number' || e.acc <= maxAccuracy)
   .sort((a, b) => a.tst - b.tst);
 
 const dayEntries = locationEntries.filter(e => toLocalDate(e.tst) === date);
