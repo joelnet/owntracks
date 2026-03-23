@@ -21,7 +21,7 @@
     "yaml": "^2.8.3"
   },
   "nodemonConfig": {
-    "ignore": ["data/", "logs/"]
+    "ignore": ["data/**", "logs/**"]
   },
   "devDependencies": {
     "nodemon": "^3.1.14",
