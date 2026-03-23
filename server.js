@@ -87,7 +87,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
+      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel, entry.acc);
 
       if (activityResult.changed || activityResult.initialClassification) {
         if (onActivityPersist) {
