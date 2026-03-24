@@ -21,3 +21,4 @@ activity:
   driving_min_kmh: 25
   window_size: 5
   min_transition_seconds: 120
+  min_point_interval_seconds: 5
