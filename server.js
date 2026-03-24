@@ -143,7 +143,7 @@ if (isDirectRun) {
   const config = loadConfig(path.join(import.meta.dirname, "config.yml"));
   const detector = createPOIDetector(config);
 
-  // Seed detector state from location log
+  // Seed detector state from location log, then verify against latest GPS data
   let lastLocation = "Roaming";
   try {
     const logContent = fs.readFileSync(log.LOCATION_LOG_PATH, "utf-8");
@@ -152,13 +152,39 @@ if (isDirectRun) {
       const match = lines[i].match(/Location: (.+)$/);
       if (match) {
         lastLocation = match[1];
-        detector.setLocation(lastLocation);
         break;
       }
     }
   } catch {
     // No location log yet — default to Roaming
   }
+
+  // Re-check last GPS coordinates against current POI config
+  // This handles new POIs added since last transition, or config changes
+  let seededFromGps = false;
+  try {
+    const dataDir = path.join(import.meta.dirname, "data");
+    const files = fs.readdirSync(dataDir).filter(f => f.endsWith(".jsonl")).sort();
+    if (files.length > 0) {
+      const lastFile = fs.readFileSync(path.join(dataDir, files[files.length - 1]), "utf-8");
+      const lines = lastFile.trim().split("\n");
+      for (let i = lines.length - 1; i >= 0; i--) {
+        const entry = JSON.parse(lines[i]);
+        if (typeof entry.lat === "number" && typeof entry.lon === "number") {
+          lastLocation = detector.resolveLocation(entry.lat, entry.lon);
+          detector.setLocation(lastLocation);
+          seededFromGps = true;
+          break;
+        }
+      }
+    }
+  } catch {
+    // Fall back to location log value
+  }
+  if (!seededFromGps) {
+    detector.setLocation(lastLocation);
+  }
+
   log.location(`Last known location: ${lastLocation}`);
 
   // Initialize Discord bot (optional)

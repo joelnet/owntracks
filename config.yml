@@ -12,6 +12,10 @@ poi:
     - name: Target
       lat: 34.0297163
       lon: -117.9190439
+    - name: Work
+      lat: 33.6349701
+      lon: -117.849966
+      radius_m: 100
 
 activity:
   enabled: true
