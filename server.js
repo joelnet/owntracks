@@ -194,7 +194,8 @@ if (isDirectRun) {
   const discordGuildId = process.env.DISCORD_GUILD_ID;
 
   if (discordToken && discordChannelId && discordGuildId) {
-    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector });
+    const dataDir = path.join(import.meta.dirname, 'data');
+    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, dataDir });
     discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
 
