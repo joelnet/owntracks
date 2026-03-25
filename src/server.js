@@ -140,7 +140,7 @@ if (isDirectRun) {
   }
 
   // Load config and create POI detector
-  const config = loadConfig(path.join(import.meta.dirname, "config.yml"));
+  const config = loadConfig(path.join(import.meta.dirname, "..", "config.yml"));
   const detector = createPOIDetector(config);
 
   // Seed detector state from location log, then verify against latest GPS data
@@ -163,7 +163,7 @@ if (isDirectRun) {
   // This handles new POIs added since last transition, or config changes
   let seededFromGps = false;
   try {
-    const dataDir = path.join(import.meta.dirname, "data");
+    const dataDir = path.join(import.meta.dirname, "..", "data");
     const files = fs.readdirSync(dataDir).filter(f => f.endsWith(".jsonl")).sort();
     if (files.length > 0) {
       const lastFile = fs.readFileSync(path.join(dataDir, files[files.length - 1]), "utf-8");
@@ -194,7 +194,7 @@ if (isDirectRun) {
   const discordGuildId = process.env.DISCORD_GUILD_ID;
 
   if (discordToken && discordChannelId && discordGuildId) {
-    const dataDir = path.join(import.meta.dirname, 'data');
+    const dataDir = path.join(import.meta.dirname, '..', 'data');
     discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, dataDir });
     discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
@@ -208,7 +208,7 @@ if (isDirectRun) {
     activity = createActivityDetector(activityConfig);
 
     // Restore persisted state
-    const activityStatePath = path.join(import.meta.dirname, "data", "activity-state.json");
+    const activityStatePath = path.join(import.meta.dirname, "..", "data", "activity-state.json");
     try {
       const saved = JSON.parse(fs.readFileSync(activityStatePath, "utf-8"));
       activity.setState(saved);
@@ -218,7 +218,7 @@ if (isDirectRun) {
     }
 
     onActivityPersist = (state) => {
-      const dir = path.join(import.meta.dirname, "data");
+      const dir = path.join(import.meta.dirname, "..", "data");
       fs.mkdirSync(dir, { recursive: true });
       fs.writeFileSync(path.join(dir, "activity-state.json"), JSON.stringify(state), "utf-8");
     };

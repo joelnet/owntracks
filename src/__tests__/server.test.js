@@ -16,7 +16,7 @@ mock.module('../lib/logger.js', {
 const { createApp } = await import('../server.js');
 const { default: request } = await import('supertest');
 
-const TEST_DATA_DIR = path.join(import.meta.dirname, '../data-test-server');
+const TEST_DATA_DIR = path.join(import.meta.dirname, '../../data-test-server');
 const TEST_USER = 'joel';
 const TEST_PASS = 'secret123';
 

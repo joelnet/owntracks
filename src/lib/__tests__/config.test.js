@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadConfig } from '../config.js';
 
-const TMP_DIR = path.join(import.meta.dirname, '../../tmp-config-test');
+const TMP_DIR = path.join(import.meta.dirname, '../../../tmp-config-test');
 
 function writeConfig(content) {
   fs.mkdirSync(TMP_DIR, { recursive: true });

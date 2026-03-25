@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { appendEntry, getDataDir } from '../store.js';
 
-const TEST_DATA_DIR = path.join(import.meta.dirname, '../../data-test');
+const TEST_DATA_DIR = path.join(import.meta.dirname, '../../../data-test');
 
 describe('store', () => {
   beforeEach(() => {

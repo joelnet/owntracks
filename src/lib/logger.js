@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const LOG_DIR = path.join(import.meta.dirname, '../logs');
+const LOG_DIR = path.join(import.meta.dirname, '../../logs');
 
 function getLogPath() {
   const today = new Date().toISOString().slice(0, 10);

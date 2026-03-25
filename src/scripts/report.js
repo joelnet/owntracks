@@ -13,7 +13,7 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
   process.exit(1);
 }
 
-const rootDir = path.join(import.meta.dirname, '..');
+const rootDir = path.join(import.meta.dirname, '..', '..');
 const config = loadConfig(path.join(rootDir, 'config.yml'));
 const dataDir = path.join(rootDir, 'data');
 

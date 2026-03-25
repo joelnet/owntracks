@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const DEFAULT_DATA_DIR = path.join(import.meta.dirname, '../data');
+const DEFAULT_DATA_DIR = path.join(import.meta.dirname, '../../data');
 
 export function getDataDir() {
   return DEFAULT_DATA_DIR;
