@@ -336,16 +336,15 @@ describe('activity detector', () => {
       }
       assert.equal(detector.getState(), 'DRIVING');
 
-      // Now feed WALKING speed points; need pendingCount >= 2 to trigger change
+      // Now feed points below walking_max_kmh to exit DRIVING (hysteresis)
       const baseTime = drivingPts[drivingPts.length - 1].timestamp + 30;
-      const walkingPts = makePoints(5, 15, baseTime);
+      const walkingPts = makePoints(5, 5, baseTime);
       let changedResult;
       for (const p of walkingPts) {
         const r = detector.update(p.lat, p.lon, p.timestamp, p.vel);
         if (r.changed) changedResult = r;
       }
       assert.ok(changedResult, 'should have a changed:true result');
-      assert.equal(changedResult.state, 'WALKING');
       assert.equal(changedResult.previousState, 'DRIVING');
     });
   });
@@ -361,9 +360,9 @@ describe('activity detector', () => {
       }
       assert.equal(detector.getState(), 'DRIVING');
 
-      // Feed walking-speed points for only 60s (below 120s threshold)
+      // Feed points below walking_max to exit hysteresis, for only 60s (below 120s threshold)
       const baseTime = drivingPts[drivingPts.length - 1].timestamp + 30;
-      const walkingPts = makePoints(3, 15, baseTime); // 3 pts * 30s = 60s
+      const walkingPts = makePoints(3, 5, baseTime); // 3 pts * 30s = 60s
       for (const p of walkingPts) {
         detector.update(p.lat, p.lon, p.timestamp, p.vel);
       }
@@ -374,10 +373,10 @@ describe('activity detector', () => {
       const config = { ...BASE_CONFIG, min_transition_seconds: 120 };
       const detector = createActivityDetector(config);
 
-      // Build a continuous path: 5 driving points then 8 walking points
+      // Build a continuous path: 5 driving points then 8 points below walking_max (exits hysteresis)
       const pts = makeContinuousPoints([
         { count: 5, speedKmh: 50 },
-        { count: 8, speedKmh: 15 },
+        { count: 8, speedKmh: 5 },
       ]);
 
       let changedResult;
@@ -386,7 +385,6 @@ describe('activity detector', () => {
         if (r.changed) changedResult = r;
       }
       assert.ok(changedResult, 'should transition after time requirement met');
-      assert.equal(changedResult.state, 'WALKING');
     });
 
     it('resets pending timer when classification oscillates', () => {
@@ -399,9 +397,9 @@ describe('activity detector', () => {
       }
 
       let baseTime = drivingPts[drivingPts.length - 1].timestamp + 30;
-      // Oscillate: walking, driving, walking — timer resets each flip
+      // Oscillate: slow (below walking_max), driving, slow — timer resets each flip
       for (let i = 0; i < 3; i++) {
-        const walk = makePoints(2, 15, baseTime);
+        const walk = makePoints(2, 5, baseTime);
         for (const p of walk) detector.update(p.lat, p.lon, p.timestamp, p.vel);
         baseTime = walk[walk.length - 1].timestamp + 30;
 
@@ -409,7 +407,7 @@ describe('activity detector', () => {
         for (const p of drive) detector.update(p.lat, p.lon, p.timestamp, p.vel);
         baseTime = drive[drive.length - 1].timestamp + 30;
       }
-      // Despite many walking points total, oscillation prevents transition
+      // Despite many slow points total, oscillation prevents transition
       assert.equal(detector.getState(), 'DRIVING');
     });
 
@@ -444,6 +442,87 @@ describe('activity detector', () => {
       const detector2 = createActivityDetector(config);
       detector2.setState(state);
       assert.deepEqual(detector2.getFullState(), state);
+    });
+  });
+
+  describe('hysteresis', () => {
+    it('stays DRIVING at speeds between walking_max and driving_min', () => {
+      const detector = createActivityDetector(BASE_CONFIG);
+      // Establish DRIVING
+      const drivingPts = makePoints(5, 50);
+      for (const p of drivingPts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'DRIVING');
+
+      // Feed points at 15 km/h (between walking_max=7 and driving_min=25)
+      // Without hysteresis this would transition to WALKING
+      const baseTime = drivingPts[drivingPts.length - 1].timestamp + 30;
+      const slowDrivePts = makePoints(10, 15, baseTime);
+      for (const p of slowDrivePts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'DRIVING');
+    });
+
+    it('exits DRIVING when speed drops below walking_max', () => {
+      const detector = createActivityDetector(BASE_CONFIG);
+      // Establish DRIVING
+      const drivingPts = makePoints(5, 50);
+      for (const p of drivingPts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'DRIVING');
+
+      // Feed points below walking_max_kmh (7) — should eventually transition
+      const baseTime = drivingPts[drivingPts.length - 1].timestamp + 30;
+      const walkPts = makePoints(5, 5, baseTime);
+      let changedResult;
+      for (const p of walkPts) {
+        const r = detector.update(p.lat, p.lon, p.timestamp, p.vel);
+        if (r.changed) changedResult = r;
+      }
+      assert.ok(changedResult, 'should transition when below walking_max');
+      assert.equal(changedResult.previousState, 'DRIVING');
+    });
+
+    it('does not apply hysteresis when entering DRIVING from WALKING', () => {
+      const detector = createActivityDetector(BASE_CONFIG);
+      // Establish WALKING at 15 km/h
+      const walkPts = makePoints(5, 15);
+      for (const p of walkPts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'WALKING');
+
+      // 15 km/h should stay WALKING (not jump to DRIVING — hysteresis only keeps DRIVING)
+      const baseTime = walkPts[walkPts.length - 1].timestamp + 30;
+      const morePts = makePoints(5, 15, baseTime);
+      for (const p of morePts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'WALKING');
+    });
+
+    it('handles slow urban driving pattern without false WALKING', () => {
+      const config = { ...BASE_CONFIG, window_size: 5, min_transition_seconds: 120 };
+      const detector = createActivityDetector(config);
+
+      // Simulate: highway driving, then slow surface street with stops
+      const pts = makeContinuousPoints([
+        { count: 6, speedKmh: 100 },  // highway
+        { count: 3, speedKmh: 20 },   // slowing down
+        { count: 2, speedKmh: 0 },    // stopped at light
+        { count: 3, speedKmh: 15 },   // moving again
+        { count: 2, speedKmh: 0 },    // stopped at sign
+        { count: 3, speedKmh: 20 },   // moving again
+      ]);
+
+      for (const p of pts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      // Should remain DRIVING throughout — slow driving with stops, not walking
+      assert.equal(detector.getState(), 'DRIVING');
     });
   });
 

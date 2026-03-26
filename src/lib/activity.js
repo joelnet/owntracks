@@ -41,6 +41,7 @@ export function createActivityDetector(config) {
 
   function classify(medianSpeed, timestamp) {
     if (medianSpeed >= driving_min_kmh) { dwellStart = null; return 'DRIVING'; }
+    if (currentState === 'DRIVING' && medianSpeed >= walking_max_kmh) { dwellStart = null; return 'DRIVING'; }
     if (medianSpeed >= walking_max_kmh) { dwellStart = null; return 'WALKING'; }
     if (dwellStart === null) dwellStart = timestamp;
     if (timestamp - dwellStart >= dwell_threshold_minutes * 60) return 'STATIONARY';
