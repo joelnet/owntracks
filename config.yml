@@ -1,4 +1,5 @@
 max_accuracy_m: 30
+distance_unit: mi
 
 poi:
   default_radius_m: 100

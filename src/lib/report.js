@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createPOIDetector } from './poi.js';
+import { createPOIDetector, haversineDistance } from './poi.js';
 import { createActivityDetector } from './activity.js';
 
 // --- Helpers ---
@@ -81,6 +81,9 @@ export function generateReport(date, config, dataDir, timezone) {
   }
 
   const events = [];
+  let prevPoint = null;
+  let trackingState = activity?.getState() ?? null;
+  const distanceByState = {};
 
   events.push({
     tst: dayEntries[0].tst,
@@ -90,6 +93,12 @@ export function generateReport(date, config, dataDir, timezone) {
   });
 
   for (const e of dayEntries) {
+    // Accumulate distance to current activity state before updating
+    if (prevPoint && trackingState && trackingState !== 'UNKNOWN') {
+      const d = haversineDistance(prevPoint.lat, prevPoint.lon, e.lat, e.lon);
+      distanceByState[trackingState] = (distanceByState[trackingState] || 0) + d;
+    }
+
     const poiResult = poi.detect(e.lat, e.lon);
     const actResult = activity?.update(e.lat, e.lon, e.tst, e.vel);
 
@@ -103,6 +112,7 @@ export function generateReport(date, config, dataDir, timezone) {
     }
 
     if (actResult?.gapTransition) {
+      trackingState = actResult.gapTransition.state;
       events.push({
         tst: actResult.gapTransition.timestamp,
         type: 'activity',
@@ -112,6 +122,7 @@ export function generateReport(date, config, dataDir, timezone) {
     }
 
     if (actResult && (actResult.changed || actResult.initialClassification)) {
+      trackingState = actResult.state;
       events.push({
         tst: e.tst,
         type: 'activity',
@@ -119,6 +130,8 @@ export function generateReport(date, config, dataDir, timezone) {
         previousState: actResult.previousState,
       });
     }
+
+    prevPoint = { lat: e.lat, lon: e.lon };
   }
 
   events.push({
@@ -213,7 +226,14 @@ export function generateReport(date, config, dataDir, timezone) {
     }
 
     for (const [state, secs] of Object.entries(actTotals).sort((a, b) => b[1] - a[1])) {
-      lines.push(`  ${fmtState(state).padEnd(20)} ${formatDuration(secs)}`);
+      let line = `  ${fmtState(state).padEnd(20)} ${formatDuration(secs)}`;
+      if (state === 'DRIVING' && distanceByState.DRIVING) {
+        const useMiles = config.distance_unit === 'mi' || config.distance_unit === undefined;
+        const value = distanceByState.DRIVING / (useMiles ? 1609.344 : 1000);
+        const unit = useMiles ? 'mi' : 'km';
+        line += `  (${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit})`;
+      }
+      lines.push(line);
     }
   }
 

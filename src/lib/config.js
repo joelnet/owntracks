@@ -15,6 +15,10 @@ export function loadConfig(filePath) {
     throw new Error('max_accuracy_m must be a positive number');
   }
 
+  if (config.distance_unit !== undefined && config.distance_unit !== 'mi' && config.distance_unit !== 'km') {
+    throw new Error('distance_unit must be "mi" or "km"');
+  }
+
   if (!config || typeof config.poi !== 'object' || config.poi === null) {
     throw new Error('Config must contain a "poi" object');
   }
