@@ -343,6 +343,110 @@ describe('activity detector', () => {
       assert.equal(detector.getState(), 'STATIONARY');
     });
 
+    it('prevents false DRIVING from GPS velocity spikes while stationary', () => {
+      // Real scenario: stationary at home, GPS glitch produces vel=204 then vel=53
+      // With window_size=5, median([0,0,53,204])=26.5 >= driving_min=25 → false DRIVING
+      // Displacement check catches this: device hasn't actually moved
+      const config = {
+        ...BASE_CONFIG, window_size: 5,
+        dwell_threshold_minutes: 0.01, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+
+      const baseLat = 34.017;
+      const baseLon = -117.902;
+      const degreesPerMeter = 1 / 111195;
+
+      // Establish STATIONARY
+      for (let i = 0; i < 8; i++) {
+        detector.update(baseLat, baseLon, 1000000 + i * 10, 0);
+      }
+      assert.equal(detector.getState(), 'STATIONARY');
+
+      // GPS glitch: vel spike + position jump, then back to normal
+      const points = [
+        { lat: baseLat, lon: baseLon, ts: 1000090, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000100, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000110, vel: 0 },
+        { lat: baseLat + 150 * degreesPerMeter, lon: baseLon, ts: 1000118, vel: 204 },
+        { lat: baseLat, lon: baseLon, ts: 1000125, vel: 53 },
+        { lat: baseLat, lon: baseLon, ts: 1000135, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000145, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000155, vel: 0 },
+      ];
+      for (const p of points) {
+        detector.update(p.lat, p.lon, p.ts, p.vel);
+      }
+      // Should remain STATIONARY — displacement shows device hasn't moved
+      assert.equal(detector.getState(), 'STATIONARY');
+    });
+
+    it('displacement check does not suppress driving during U-turns', () => {
+      // U-turn scenario: drive out and back, window endpoints coincide but
+      // phone reports high vel throughout — median vel is high so displacement
+      // check must NOT fire
+      const config = { ...BASE_CONFIG, window_size: 5, min_transition_seconds: 0 };
+      const detector = createActivityDetector(config);
+      const degreesPerMeter = 1 / 111195;
+
+      // Establish DRIVING with continuous path
+      const pts = makeContinuousPoints([{ count: 6, speedKmh: 50 }]);
+      for (const p of pts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'DRIVING');
+
+      // U-turn: drive out ~660m then back, endpoints nearly coincide, vel=40
+      const last = pts[pts.length - 1];
+      const uTurnPoints = [
+        { lat: last.lat, ts: last.timestamp + 30, vel: 40 },
+        { lat: last.lat + 330 * degreesPerMeter, ts: last.timestamp + 60, vel: 40 },
+        { lat: last.lat + 660 * degreesPerMeter, ts: last.timestamp + 90, vel: 40 },
+        { lat: last.lat + 330 * degreesPerMeter, ts: last.timestamp + 120, vel: 40 },
+        { lat: last.lat, ts: last.timestamp + 150, vel: 40 },
+      ];
+      for (const p of uTurnPoints) {
+        detector.update(p.lat, 0, p.ts, p.vel);
+      }
+      // Should remain DRIVING — median vel=40 is high, displacement check skipped
+      assert.equal(detector.getState(), 'DRIVING');
+    });
+
+    it('displacement check works when vel is unavailable (GPS-only path)', () => {
+      // GPS-only scenario: vel unavailable, position spike creates high calculated speed
+      const config = {
+        ...BASE_CONFIG, window_size: 5,
+        dwell_threshold_minutes: 0.01, min_transition_seconds: 0,
+        min_point_interval_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+      const degreesPerMeter = 1 / 111195;
+      const baseLat = 34.017;
+      const baseLon = -117.902;
+
+      // Establish STATIONARY with vel unavailable
+      for (let i = 0; i < 8; i++) {
+        detector.update(baseLat, baseLon, 1000000 + i * 30, undefined);
+      }
+      assert.equal(detector.getState(), 'STATIONARY');
+
+      // GPS position spike with vel unavailable — calculated speed will be high
+      const points = [
+        { lat: baseLat, lon: baseLon, ts: 1000300 },
+        { lat: baseLat, lon: baseLon, ts: 1000310 },
+        { lat: baseLat, lon: baseLon, ts: 1000320 },
+        { lat: baseLat + 300 * degreesPerMeter, lon: baseLon, ts: 1000330 },
+        { lat: baseLat, lon: baseLon, ts: 1000340 },
+        { lat: baseLat, lon: baseLon, ts: 1000350 },
+        { lat: baseLat, lon: baseLon, ts: 1000360 },
+      ];
+      for (const p of points) {
+        detector.update(p.lat, p.lon, p.ts, undefined);
+      }
+      // Should remain STATIONARY — displacement shows no real movement
+      assert.equal(detector.getState(), 'STATIONARY');
+    });
+
     it('prevents false WALKING from GPS drift when phone reports low vel', () => {
       // Production scenario: at home, GPS drifts 10-25m per update, but vel=0-2
       const config = { ...BASE_CONFIG, walking_max_kmh: 3, dwell_threshold_minutes: 0.5, min_point_interval_seconds: 5 };

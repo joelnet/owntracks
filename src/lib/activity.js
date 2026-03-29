@@ -74,9 +74,28 @@ export function createActivityDetector(config) {
       if (window.length < window_size)
         return { changed: false, state: currentState, previousState: currentState, initialClassification: false, gapTransition };
 
-      const medianSpeed = computeMedianSpeed();
+      let medianSpeed = computeMedianSpeed();
       if (medianSpeed === null)
         return { changed: false, state: currentState, previousState: currentState, initialClassification: false, gapTransition };
+
+      // Displacement sanity check: if window endpoints show the device hasn't
+      // actually moved AND the median of phone-reported velocities is low, high
+      // median speed is from GPS velocity spikes, not real driving. Using median
+      // vel (robust to outliers) prevents suppressing legitimate driving in
+      // U-turn/loop scenarios where endpoints coincide but the phone knows it's moving.
+      const first = window[0], last = window[window.length - 1];
+      const windowTime = last.timestamp - first.timestamp;
+      if (windowTime > 0 && medianSpeed >= driving_min_kmh) {
+        const velValues = window.map(p =>
+          typeof p.vel === 'number' && p.vel >= 0 ? p.vel : 0);
+        if (median(velValues) < walking_max_kmh) {
+          const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
+          const displacementSpeed = (displacement / windowTime) * 3.6;
+          if (displacementSpeed < walking_max_kmh) {
+            medianSpeed = displacementSpeed;
+          }
+        }
+      }
 
       const latestTimestamp = window[window.length - 1].timestamp;
       const candidate = classify(medianSpeed, latestTimestamp);
