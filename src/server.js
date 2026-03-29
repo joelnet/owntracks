@@ -9,6 +9,7 @@ import { loadConfig } from "./lib/config.js";
 import { createPOIDetector } from "./lib/poi.js";
 import { createDiscordClient } from "./lib/discord.js";
 import { createActivityDetector } from "./lib/activity.js";
+import { createVisitDetector } from "./lib/visit.js";
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -16,7 +17,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, maxAccuracy } = {}) {
+export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy } = {}) {
   const app = express();
 
   app.use(express.json());
@@ -116,6 +117,39 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       }
     }
 
+    // Visit detection
+    if (
+      visit &&
+      entry.type === "location" &&
+      typeof entry.lat === "number" &&
+      typeof entry.lon === "number"
+    ) {
+      const poiResult = detector ? detector.getLocation() : 'Roaming';
+      const activityState = activity ? activity.getState() : 'UNKNOWN';
+      const visitResult = visit.processPoint(
+        { lat: entry.lat, lon: entry.lon, tst: entry.tst },
+        poiResult,
+        activityState
+      );
+
+      if (onVisitPersist) {
+        try {
+          onVisitPersist(visit.getState(), visit.getLearnedPois());
+        } catch (err) {
+          log.error(`Failed to persist visit state: ${err.message}`);
+        }
+      }
+
+      if (visitResult && visitConfig?.discord_notifications && discord) {
+        if (visitResult.type === 'visit_started') {
+          discord.notify(`POI Lookup at (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
+        }
+        if (visitResult.type === 'visit_ended') {
+          discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
+        }
+      }
+    }
+
     appendEntry(entry, dataDir);
     log.info(`Entry saved: user=${user} device=${device} type=${entry.type}`);
 
@@ -141,6 +175,22 @@ if (isDirectRun) {
 
   // Load config and create POI detector
   const config = loadConfig(path.join(import.meta.dirname, "..", "config.yml"));
+
+  // Load learned POIs and merge into POI config before creating detector
+  let learnedPois = [];
+  const learnedPoisPath = path.join(import.meta.dirname, '..', 'data', 'learned-pois.json');
+  if (config.visit_detection?.enabled && config.visit_detection?.learn_pois) {
+    try {
+      learnedPois = JSON.parse(fs.readFileSync(learnedPoisPath, 'utf-8'));
+      for (const poi of learnedPois) {
+        config.poi.locations.push(poi);
+      }
+      log.info(`Loaded ${learnedPois.length} learned POIs`);
+    } catch {
+      log.info('No learned POIs to load');
+    }
+  }
+
   const detector = createPOIDetector(config);
 
   // Seed detector state from location log, then verify against latest GPS data
@@ -224,8 +274,35 @@ if (isDirectRun) {
     };
   }
 
+  // Initialize visit detector (optional)
+  let visit;
+  let visitConfig;
+  let onVisitPersist;
+  if (config.visit_detection?.enabled) {
+    visitConfig = config.visit_detection;
+
+    const visitStatePath = path.join(import.meta.dirname, '..', 'data', 'visit-session.json');
+    let savedVisitState = null;
+    try {
+      savedVisitState = JSON.parse(fs.readFileSync(visitStatePath, 'utf-8'));
+      log.info(`Visit session restored: active=${savedVisitState.active}`);
+    } catch {
+      log.info('No visit session to restore');
+    }
+
+    visit = createVisitDetector(visitConfig, savedVisitState);
+    visit.loadLearnedPois(learnedPois);
+
+    onVisitPersist = (state, pois) => {
+      const dir = path.join(import.meta.dirname, '..', 'data');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, 'visit-session.json'), JSON.stringify(state), 'utf-8');
+      fs.writeFileSync(path.join(dir, 'learned-pois.json'), JSON.stringify(pois, null, 2), 'utf-8');
+    };
+  }
+
   const maxAccuracy = config.max_accuracy_m;
-  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, maxAccuracy });
+  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });

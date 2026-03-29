@@ -353,4 +353,213 @@ describe('POST /pub', () => {
     assert.equal(persistCalls.length, 1);
     assert.deepEqual(persistCalls[0], fullState);
   });
+
+  it('calls visit.processPoint on location entries when visit detector exists', async () => {
+    const visitCalls = [];
+    const visit = {
+      processPoint: (point, poiResult, activityState) => {
+        visitCalls.push({ point, poiResult, activityState });
+        return null;
+      },
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.equal(visitCalls.length, 1);
+    assert.equal(visitCalls[0].point.lat, 34.05);
+    assert.equal(visitCalls[0].poiResult, 'Roaming');
+    assert.equal(visitCalls[0].activityState, 'STATIONARY');
+  });
+
+  it('sends Discord notification on visit_started event', async () => {
+    const notified = [];
+    const visit = {
+      processPoint: () => ({
+        type: 'visit_started',
+        centroid: { lat: 34.0500, lon: -117.9500 },
+        started_at: '2026-03-29T14:30:00Z',
+      }),
+      getState: () => ({ active: true }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const discord = { notify: (msg) => notified.push(msg) };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+      visitConfig: { discord_notifications: true },
+      discord,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.ok(notified.some(msg => msg.includes('POI Lookup')));
+  });
+
+  it('sends Discord notification on visit_ended event', async () => {
+    const notified = [];
+    const visit = {
+      processPoint: () => ({
+        type: 'visit_ended',
+        centroid: { lat: 34.0500, lon: -117.9500 },
+        started_at: '2026-03-29T14:30:00Z',
+        ended_at: '2026-03-29T15:15:00Z',
+        duration_minutes: 45,
+      }),
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'DRIVING', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'DRIVING',
+      getFullState: () => ({}),
+    };
+    const discord = { notify: (msg) => notified.push(msg) };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+      visitConfig: { discord_notifications: true },
+      discord,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.ok(notified.some(msg => msg.includes('Left unknown location') && msg.includes('45 min')));
+  });
+
+  it('does not send visit Discord notification when discord_notifications is false', async () => {
+    const notified = [];
+    const visit = {
+      processPoint: () => ({
+        type: 'visit_started',
+        centroid: { lat: 34.0500, lon: -117.9500 },
+        started_at: '2026-03-29T14:30:00Z',
+      }),
+      getState: () => ({ active: true }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const discord = { notify: (msg) => notified.push(msg) };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+      visitConfig: { discord_notifications: false },
+      discord,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    const visitNotifications = notified.filter(msg => msg.includes('POI Lookup') || msg.includes('Left unknown'));
+    assert.equal(visitNotifications.length, 0);
+  });
+
+  it('persists visit state via onVisitPersist callback', async () => {
+    const persistCalls = [];
+    const visit = {
+      processPoint: () => null,
+      getState: () => ({ active: true, anchor: { lat: 34.05, lon: -117.95 } }),
+      getLearnedPois: () => [{ name: 'Test', lat: 34.05, lon: -117.95 }],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const onVisitPersist = (state, pois) => persistCalls.push({ state, pois });
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+      onVisitPersist,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.equal(persistCalls.length, 1);
+    assert.equal(persistCalls[0].state.active, true);
+    assert.equal(persistCalls[0].pois.length, 1);
+  });
+
+  it('skips visit detection for non-location entries', async () => {
+    const visitCalls = [];
+    const visit = {
+      processPoint: (point) => { visitCalls.push(point); return null; },
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      visit,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'transition', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.equal(visitCalls.length, 0);
+  });
 });
