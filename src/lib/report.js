@@ -228,7 +228,7 @@ export function generateReport(date, config, dataDir, timezone) {
     for (const [state, secs] of Object.entries(actTotals).sort((a, b) => b[1] - a[1])) {
       let line = `  ${fmtState(state).padEnd(20)} ${formatDuration(secs)}`;
       if (state === 'DRIVING' && distanceByState.DRIVING) {
-        const useMiles = config.distance_unit === 'mi' || config.distance_unit === undefined;
+        const useMiles = config.distance_unit !== 'kilometers';
         const value = distanceByState.DRIVING / (useMiles ? 1609.344 : 1000);
         const unit = useMiles ? 'mi' : 'km';
         line += `  (${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit})`;
