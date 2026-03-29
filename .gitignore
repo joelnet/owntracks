@@ -3,3 +3,6 @@ data/
 logs/
 data-test*/
 .env
+.dmux/
+.dmux-hooks/
+
