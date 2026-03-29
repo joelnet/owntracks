@@ -154,12 +154,12 @@ describe('activity detector', () => {
     it('ignores speed pairs with time delta below threshold', () => {
       const config = { ...BASE_CONFIG, min_point_interval_seconds: 5, window_size: 3 };
       const detector = createActivityDetector(config);
-      // 7 points 1 second apart with ~15m drift each
+      // 7 points 1 second apart with ~15m drift each, vel unavailable (undefined)
       // Without filtering, 15m/1s = 54 km/h → classified as DRIVING
       // With filtering, all pairs have dt=1s < 5s → no valid speeds → stays UNKNOWN
       const degreesPerMeter = 1 / 111195;
       for (let i = 0; i < 7; i++) {
-        detector.update(i * 15 * degreesPerMeter, 0, 1000000 + i, 0);
+        detector.update(i * 15 * degreesPerMeter, 0, 1000000 + i, undefined);
       }
       assert.equal(detector.getState(), 'UNKNOWN');
     });
@@ -273,16 +273,74 @@ describe('activity detector', () => {
       assert.equal(detector.getState(), 'STATIONARY');
     });
 
-    it('falls back to calculated speed when vel is 0', () => {
-      const config = { ...BASE_CONFIG, min_point_interval_seconds: 5 };
+    it('trusts vel=0 as stationary instead of computing from GPS', () => {
+      const config = { ...BASE_CONFIG, min_point_interval_seconds: 5, dwell_threshold_minutes: 0.01 };
       const detector = createActivityDetector(config);
-      // Points at driving speed with vel=0 — should still detect DRIVING via calculated speed
+      // Points with GPS positions that look like driving, but phone reports vel=0
+      // Phone knows it's stationary — trust it over GPS-derived speed
       const pts = makePoints(6, 50);
       let result;
       for (const p of pts) {
         result = detector.update(p.lat, p.lon, p.timestamp, 0);
       }
+      assert.equal(result.state, 'STATIONARY');
+    });
+
+    it('falls back to calculated speed when vel is undefined', () => {
+      const config = { ...BASE_CONFIG, min_point_interval_seconds: 5 };
+      const detector = createActivityDetector(config);
+      // vel unavailable — should compute speed from GPS positions
+      const pts = makePoints(6, 50);
+      let result;
+      for (const p of pts) {
+        result = detector.update(p.lat, p.lon, p.timestamp, undefined);
+      }
       assert.equal(result.state, 'DRIVING');
+    });
+
+    it('falls back to calculated speed when vel is -1 (unavailable)', () => {
+      const config = { ...BASE_CONFIG, min_point_interval_seconds: 5 };
+      const detector = createActivityDetector(config);
+      // OwnTracks uses vel=-1 for "velocity unavailable"
+      const pts = makePoints(6, 50);
+      let result;
+      for (const p of pts) {
+        result = detector.update(p.lat, p.lon, p.timestamp, -1);
+      }
+      assert.equal(result.state, 'DRIVING');
+    });
+
+    it('vel=0 prevents false driving from GPS position jumps', () => {
+      const config = {
+        ...BASE_CONFIG, min_point_interval_seconds: 5, window_size: 5,
+        dwell_threshold_minutes: 0.01, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+
+      // Simulate real scenario: stationary phone with GPS multipath glitch
+      // Phone reports vel=0 throughout, but GPS position jumps ~250m
+      const baseLat = 34.017;
+      const baseLon = -117.902;
+      const degreesPerMeter = 1 / 111195;
+      const points = [
+        { lat: baseLat, lon: baseLon, ts: 1000000 },
+        { lat: baseLat, lon: baseLon, ts: 1000010 },
+        { lat: baseLat, lon: baseLon, ts: 1000020 },
+        { lat: baseLat, lon: baseLon, ts: 1000030 },
+        { lat: baseLat, lon: baseLon, ts: 1000040 },
+        { lat: baseLat, lon: baseLon, ts: 1000050 },
+        // GPS glitch — position jumps ~250m
+        { lat: baseLat + 250 * degreesPerMeter, lon: baseLon, ts: 1000055 },
+        // Snaps back
+        { lat: baseLat, lon: baseLon, ts: 1000065 },
+        { lat: baseLat, lon: baseLon, ts: 1000075 },
+        { lat: baseLat, lon: baseLon, ts: 1000085 },
+      ];
+      for (const p of points) {
+        detector.update(p.lat, p.lon, p.ts, 0); // vel=0 throughout
+      }
+      // Should be STATIONARY — phone knows it's not moving despite GPS glitch
+      assert.equal(detector.getState(), 'STATIONARY');
     });
 
     it('prevents false WALKING from GPS drift when phone reports low vel', () => {

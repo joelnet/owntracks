@@ -1,9 +1,5 @@
 import { haversineDistance } from './poi.js';
 
-function sanitizeVel(vel) {
-  return typeof vel === 'number' && vel > 0 ? vel : 0;
-}
-
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
   const mid = Math.floor(sorted.length / 2);
@@ -26,11 +22,11 @@ export function createActivityDetector(config) {
       const p1 = window[i], p2 = window[i + 1];
       const timeDelta = p2.timestamp - p1.timestamp;
       if (timeDelta <= 0) continue;
-      const vel = sanitizeVel(p2.vel);
-      // Phone-reported velocity (Doppler-based) is reliable at any interval;
-      // only apply min_point_interval filter to GPS-position-derived speed
-      if (vel > 0) {
-        speeds.push(vel);
+      // Phone-reported velocity (Doppler-based) is reliable at any interval.
+      // vel >= 0 means the phone has a measurement (including zero = stationary).
+      // vel < 0 or absent means unavailable — fall back to GPS-position-derived speed.
+      if (typeof p2.vel === 'number' && p2.vel >= 0) {
+        speeds.push(p2.vel);
       } else if (timeDelta >= min_point_interval_seconds) {
         const dist = haversineDistance(p1.lat, p1.lon, p2.lat, p2.lon);
         speeds.push((dist / timeDelta) * 3.6);
