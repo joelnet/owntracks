@@ -381,6 +381,45 @@ describe('activity detector', () => {
       assert.equal(detector.getState(), 'STATIONARY');
     });
 
+    it('prevents false DRIVING from GPS spikes with high vel values', () => {
+      // Real scenario: stationary at home, GPS glitch produces position jumps AND
+      // high vel values (vel=98, vel=96). With window_size=5, median speed from vel
+      // pairs is high enough for DRIVING. The displacement check must fire even though
+      // median vel (12) > walking_max_kmh, because some points have vel=0.
+      const config = {
+        ...BASE_CONFIG, window_size: 5,
+        dwell_threshold_minutes: 0.01, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+      const baseLat = 34.017;
+      const baseLon = -117.902;
+      const degreesPerMeter = 1 / 111195;
+
+      // Establish STATIONARY
+      for (let i = 0; i < 8; i++) {
+        detector.update(baseLat, baseLon, 1000000 + i * 10, 0);
+      }
+      assert.equal(detector.getState(), 'STATIONARY');
+
+      // GPS glitch: some points have position spike + high vel, others are normal vel=0
+      const points = [
+        { lat: baseLat, lon: baseLon, ts: 1000090, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000100, vel: 0 },
+        { lat: baseLat + 200 * degreesPerMeter, lon: baseLon, ts: 1000108, vel: 98 },
+        { lat: baseLat + 210 * degreesPerMeter, lon: baseLon, ts: 1000116, vel: 12 },
+        { lat: baseLat, lon: baseLon, ts: 1000121, vel: 96 },
+        { lat: baseLat, lon: baseLon, ts: 1000131, vel: 1 },
+        { lat: baseLat, lon: baseLon, ts: 1000141, vel: 0 },
+        { lat: baseLat, lon: baseLon, ts: 1000151, vel: 0 },
+      ];
+      for (const p of points) {
+        detector.update(p.lat, p.lon, p.ts, p.vel);
+      }
+      // Should remain STATIONARY — vel=0 points prove phone was stationary,
+      // high vel values are GPS artifacts
+      assert.equal(detector.getState(), 'STATIONARY');
+    });
+
     it('displacement check does not suppress driving during U-turns', () => {
       // U-turn scenario: drive out and back, window endpoints coincide but
       // phone reports high vel throughout — median vel is high so displacement

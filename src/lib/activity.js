@@ -79,16 +79,18 @@ export function createActivityDetector(config) {
         return { changed: false, state: currentState, previousState: currentState, initialClassification: false, gapTransition };
 
       // Displacement sanity check: if window endpoints show the device hasn't
-      // actually moved AND the median of phone-reported velocities is low, high
-      // median speed is from GPS velocity spikes, not real driving. Using median
-      // vel (robust to outliers) prevents suppressing legitimate driving in
-      // U-turn/loop scenarios where endpoints coincide but the phone knows it's moving.
+      // actually moved, high median speed is from GPS artifacts, not real driving.
+      // Check displacement when median vel is low OR any point reports vel=0
+      // (phone confirmed stationary). This catches GPS glitches that produce both
+      // position AND velocity spikes while some points still correctly report vel=0.
+      // Legitimate driving (including U-turns) is preserved because all window
+      // points have consistently high vel, so neither condition triggers.
       const first = window[0], last = window[window.length - 1];
       const windowTime = last.timestamp - first.timestamp;
       if (windowTime > 0 && medianSpeed >= driving_min_kmh) {
         const velValues = window.map(p =>
           typeof p.vel === 'number' && p.vel >= 0 ? p.vel : 0);
-        if (median(velValues) < walking_max_kmh) {
+        if (median(velValues) < walking_max_kmh || velValues.includes(0)) {
           const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
           const displacementSpeed = (displacement / windowTime) * 3.6;
           if (displacementSpeed < walking_max_kmh) {
