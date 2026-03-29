@@ -13,6 +13,17 @@ function writeConfig(content) {
   return filePath;
 }
 
+const VALID_VISIT_SECTION = `
+visit_detection:
+  enabled: true
+  containment_radius_m: 200
+  min_dwell_minutes: 5
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
+`;
+
 const VALID_POI_SECTION = `
 poi:
   default_radius_m: 100
@@ -181,5 +192,99 @@ activity:
   enabled: true
 `);
     assert.throws(() => loadConfig(filePath));
+  });
+});
+
+describe('visit_detection config', () => {
+  afterEach(() => {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('accepts valid config with visit_detection section', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + VALID_VISIT_SECTION);
+    const config = loadConfig(filePath);
+    assert.equal(config.visit_detection.enabled, true);
+    assert.equal(config.visit_detection.containment_radius_m, 200);
+    assert.equal(config.visit_detection.min_dwell_minutes, 5);
+    assert.equal(config.visit_detection.exit_timeout_minutes, 3);
+    assert.equal(config.visit_detection.discord_notifications, true);
+    assert.equal(config.visit_detection.learn_pois, true);
+    assert.equal(config.visit_detection.learned_poi_radius_m, 100);
+  });
+
+  it('accepts config without visit_detection section', () => {
+    const filePath = writeConfig(VALID_POI_SECTION);
+    const config = loadConfig(filePath);
+    assert.equal(config.visit_detection, undefined);
+  });
+
+  it('throws when enabled is not boolean', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+visit_detection:
+  enabled: "yes"
+  containment_radius_m: 200
+  min_dwell_minutes: 5
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
+`);
+    assert.throws(() => loadConfig(filePath), { message: /visit_detection\.enabled.*boolean/ });
+  });
+
+  it('throws when containment_radius_m is not positive', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+visit_detection:
+  enabled: true
+  containment_radius_m: -1
+  min_dwell_minutes: 5
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
+`);
+    assert.throws(() => loadConfig(filePath), { message: /containment_radius_m.*positive/ });
+  });
+
+  it('throws when min_dwell_minutes is not positive', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+visit_detection:
+  enabled: true
+  containment_radius_m: 200
+  min_dwell_minutes: 0
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
+`);
+    assert.throws(() => loadConfig(filePath), { message: /min_dwell_minutes.*positive/ });
+  });
+
+  it('throws when exit_timeout_minutes is not positive', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+visit_detection:
+  enabled: true
+  containment_radius_m: 200
+  min_dwell_minutes: 5
+  exit_timeout_minutes: -1
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
+`);
+    assert.throws(() => loadConfig(filePath), { message: /exit_timeout_minutes.*positive/ });
+  });
+
+  it('throws when learned_poi_radius_m is not positive', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+visit_detection:
+  enabled: true
+  containment_radius_m: 200
+  min_dwell_minutes: 5
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 0
+`);
+    assert.throws(() => loadConfig(filePath), { message: /learned_poi_radius_m.*positive/ });
   });
 });

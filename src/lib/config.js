@@ -15,8 +15,8 @@ export function loadConfig(filePath) {
     throw new Error('max_accuracy_m must be a positive number');
   }
 
-  if (config.distance_unit !== undefined && config.distance_unit !== 'mi' && config.distance_unit !== 'km') {
-    throw new Error('distance_unit must be "mi" or "km"');
+  if (config.distance_unit !== undefined && config.distance_unit !== 'miles' && config.distance_unit !== 'kilometers') {
+    throw new Error('distance_unit must be "miles" or "kilometers"');
   }
 
   if (!config || typeof config.poi !== 'object' || config.poi === null) {
@@ -66,6 +66,17 @@ export function loadConfig(filePath) {
     if (activity.walking_max_kmh >= activity.driving_min_kmh) throw new Error('activity.walking_max_kmh must be less than activity.driving_min_kmh');
     if (!Number.isInteger(activity.window_size) || activity.window_size < 3) throw new Error('activity.window_size must be an integer >= 3');
     if (activity.min_transition_seconds !== undefined && (typeof activity.min_transition_seconds !== 'number' || activity.min_transition_seconds < 0)) throw new Error('activity.min_transition_seconds must be a non-negative number');
+  }
+
+  if (config.visit_detection !== undefined) {
+    const { visit_detection } = config;
+    if (typeof visit_detection.enabled !== 'boolean') throw new Error('visit_detection.enabled must be a boolean');
+    if (typeof visit_detection.containment_radius_m !== 'number' || visit_detection.containment_radius_m <= 0) throw new Error('visit_detection.containment_radius_m must be a positive number');
+    if (typeof visit_detection.min_dwell_minutes !== 'number' || visit_detection.min_dwell_minutes <= 0) throw new Error('visit_detection.min_dwell_minutes must be a positive number');
+    if (typeof visit_detection.exit_timeout_minutes !== 'number' || visit_detection.exit_timeout_minutes <= 0) throw new Error('visit_detection.exit_timeout_minutes must be a positive number');
+    if (typeof visit_detection.discord_notifications !== 'boolean') throw new Error('visit_detection.discord_notifications must be a boolean');
+    if (typeof visit_detection.learn_pois !== 'boolean') throw new Error('visit_detection.learn_pois must be a boolean');
+    if (typeof visit_detection.learned_poi_radius_m !== 'number' || visit_detection.learned_poi_radius_m <= 0) throw new Error('visit_detection.learned_poi_radius_m must be a positive number');
   }
 
   return config;
