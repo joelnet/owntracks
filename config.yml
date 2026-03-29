@@ -1,5 +1,5 @@
 max_accuracy_m: 30
-distance_unit: mi
+distance_unit: miles
 
 poi:
   default_radius_m: 100
@@ -27,3 +27,12 @@ activity:
   window_size: 5
   min_transition_seconds: 120
   min_point_interval_seconds: 5
+
+visit_detection:
+  enabled: true
+  containment_radius_m: 200
+  min_dwell_minutes: 5
+  exit_timeout_minutes: 3
+  discord_notifications: true
+  learn_pois: true
+  learned_poi_radius_m: 100
