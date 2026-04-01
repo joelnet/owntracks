@@ -125,7 +125,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const poiResult = detector ? detector.getLocation() : 'Roaming';
+      const poiResult = detector ? detector.resolveLocation(entry.lat, entry.lon) : 'Roaming';
       const activityState = activity ? activity.getState() : 'UNKNOWN';
       const visitResult = visit.processPoint(
         { lat: entry.lat, lon: entry.lon, tst: entry.tst },

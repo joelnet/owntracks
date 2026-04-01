@@ -367,6 +367,7 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
       getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
     };
     const activity = {
       update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
@@ -405,6 +406,7 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
       getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
     };
     const activity = {
       update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
@@ -445,6 +447,7 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
       getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
     };
     const activity = {
       update: () => ({ changed: false, state: 'DRIVING', previousState: 'STATIONARY', initialClassification: false }),
@@ -483,6 +486,7 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
       getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
     };
     const activity = {
       update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
@@ -518,6 +522,7 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
       getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
     };
     const activity = {
       update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
