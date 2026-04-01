@@ -256,3 +256,22 @@ describe('POI hysteresis (exit_extra_m)', () => {
     assert.equal(r.location, 'Roaming');
   });
 });
+
+describe('POI resetPending', () => {
+  function makeDebounceConfig(locations, points, defaultRadius = 100) {
+    return {
+      poi: { default_radius_m: defaultRadius, min_transition_points: points, locations },
+    };
+  }
+
+  it('resetPending clears accumulated pending count', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    detector.resetPending();
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060); // pending 1 again (not 3)
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+  });
+});

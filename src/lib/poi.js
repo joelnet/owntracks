@@ -77,5 +77,10 @@ export function createPOIDetector(config) {
     resolveLocation(lat, lon) {
       return resolveLocation(lat, lon);
     },
+
+    resetPending() {
+      pendingLocation = null;
+      pendingCount = 0;
+    },
   };
 }
