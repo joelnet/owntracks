@@ -275,3 +275,75 @@ describe('POI resetPending', () => {
     assert.equal(r.location, 'Home');
   });
 });
+
+describe('POI min_transition_seconds', () => {
+  function makeTimeConfig(locations, points, seconds, defaultRadius = 100) {
+    return {
+      poi: {
+        default_radius_m: defaultRadius,
+        min_transition_points: points,
+        min_transition_seconds: seconds,
+        locations,
+      },
+    };
+  }
+
+  it('does not transition when point count met but time span not met', () => {
+    const detector = createPOIDetector(makeTimeConfig([HOME], 3, 300));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060); // pending 3, but only 60s elapsed
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('transitions when both point count and time span are met', () => {
+    const detector = createPOIDetector(makeTimeConfig([HOME], 3, 300));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);  // pending 1, pendingStartTime=1000
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1150);  // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1300); // pending 3, 300s elapsed
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+    assert.equal(r.previousLocation, 'Home');
+  });
+
+  it('resets pendingStartTime when point matches current location', () => {
+    const detector = createPOIDetector(makeTimeConfig([HOME], 3, 300));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1, startTime=1000
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060); // back home, resets
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1090); // pending 1, startTime=1090
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1120); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1300); // pending 3, but only 210s from 1090
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('resetPending also clears pendingStartTime', () => {
+    const detector = createPOIDetector(makeTimeConfig([HOME], 3, 300));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1, startTime=1000
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    detector.resetPending(); // clear everything
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060); // pending 1, startTime=1060
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1090); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1300); // pending 3, only 240s from 1060
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('defaults to no time gate when min_transition_seconds is not configured', () => {
+    const detector = createPOIDetector({
+      poi: { default_radius_m: 100, min_transition_points: 3, locations: [HOME] },
+    });
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030);
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060);
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+  });
+});

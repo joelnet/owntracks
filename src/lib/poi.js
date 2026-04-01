@@ -11,10 +11,11 @@ export function haversineDistance(lat1, lon1, lat2, lon2) {
 }
 
 export function createPOIDetector(config) {
-  const { default_radius_m, locations, min_transition_points = 1, exit_extra_m = 0 } = config.poi;
+  const { default_radius_m, locations, min_transition_points = 1, exit_extra_m = 0, min_transition_seconds = 0 } = config.poi;
   let lastLocation = 'Roaming';
   let pendingLocation = null;
   let pendingCount = 0;
+  let pendingStartTime = null;
 
   function resolveLocation(lat, lon) {
     // Hysteresis: if currently at a POI, use larger exit radius for that POI
@@ -37,12 +38,13 @@ export function createPOIDetector(config) {
   }
 
   return {
-    detect(lat, lon) {
+    detect(lat, lon, tst) {
       const current = resolveLocation(lat, lon);
 
       if (current === lastLocation) {
         pendingLocation = null;
         pendingCount = 0;
+        pendingStartTime = null;
         return { changed: false, location: lastLocation, previousLocation: lastLocation };
       }
 
@@ -51,13 +53,21 @@ export function createPOIDetector(config) {
       } else {
         pendingLocation = current;
         pendingCount = 1;
+        pendingStartTime = tst ?? null;
       }
 
-      if (pendingCount >= min_transition_points) {
+      const countMet = pendingCount >= min_transition_points;
+      const timeMet = min_transition_seconds === 0
+        || pendingStartTime == null
+        || tst == null
+        || (tst - pendingStartTime) >= min_transition_seconds;
+
+      if (countMet && timeMet) {
         const previousLocation = lastLocation;
         lastLocation = current;
         pendingLocation = null;
         pendingCount = 0;
+        pendingStartTime = null;
         return { changed: true, location: current, previousLocation };
       }
 
@@ -68,6 +78,7 @@ export function createPOIDetector(config) {
       lastLocation = name;
       pendingLocation = null;
       pendingCount = 0;
+      pendingStartTime = null;
     },
 
     getLocation() {
@@ -81,6 +92,7 @@ export function createPOIDetector(config) {
     resetPending() {
       pendingLocation = null;
       pendingCount = 0;
+      pendingStartTime = null;
     },
   };
 }
