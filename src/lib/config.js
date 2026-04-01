@@ -37,6 +37,10 @@ export function loadConfig(filePath) {
     throw new Error('poi.exit_extra_m must be a non-negative number');
   }
 
+  if (poi.min_transition_seconds !== undefined && (typeof poi.min_transition_seconds !== 'number' || poi.min_transition_seconds < 0)) {
+    throw new Error('poi.min_transition_seconds must be a non-negative number');
+  }
+
   if (!Array.isArray(poi.locations) || poi.locations.length === 0) {
     throw new Error('poi.locations must be a non-empty array');
   }

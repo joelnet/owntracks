@@ -5,6 +5,7 @@ poi:
   default_radius_m: 100
   min_transition_points: 3
   exit_extra_m: 25
+  min_transition_seconds: 300
   locations:
     - name: Home
       lat: 34.0170901

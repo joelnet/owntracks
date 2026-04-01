@@ -562,4 +562,44 @@ describe('POST /pub', () => {
       .send({ _type: 'transition', lat: 34.05, lon: -117.95, tst: 1711036800 });
     assert.equal(visitCalls.length, 0);
   });
+
+  it('resets POI pending state when point is filtered by accuracy', async () => {
+    let resetCalled = false;
+    const detector = {
+      detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
+      resetPending: () => { resetCalled = true; },
+    };
+    const appWithFilter = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      maxAccuracy: 30,
+    });
+    await request(appWithFilter)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.017, lon: -117.902, acc: 50, tst: 1711036800 });
+    assert.equal(resetCalled, true);
+  });
+
+  it('does not reset POI pending state when point passes accuracy filter', async () => {
+    let resetCalled = false;
+    const detector = {
+      detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
+      resetPending: () => { resetCalled = true; },
+    };
+    const appWithFilter = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      maxAccuracy: 30,
+    });
+    await request(appWithFilter)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.017, lon: -117.902, acc: 10, tst: 1711036800 });
+    assert.equal(resetCalled, false);
+  });
 });
