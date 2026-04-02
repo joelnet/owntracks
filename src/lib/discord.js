@@ -33,6 +33,10 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
     }
   });
 
+  client.on('error', (err) => {
+    console.error('Discord client error:', err.message);
+  });
+
   client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
 

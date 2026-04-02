@@ -165,6 +165,12 @@ const isDirectRun =
   process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 
 if (isDirectRun) {
+  process.on("uncaughtException", (err) => {
+    log.error(`Uncaught exception: ${err.message}`);
+  });
+  process.on("unhandledRejection", (err) => {
+    log.error(`Unhandled rejection: ${err?.message || err}`);
+  });
   const port = process.env.PORT || 3000;
   const username = process.env.OWNTRACKS_USERNAME;
   const password = process.env.OWNTRACKS_PASSWORD;
