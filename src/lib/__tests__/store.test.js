@@ -1,60 +1,57 @@
-import { describe, it, beforeEach, afterEach } from 'node:test';
+import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
-import { appendEntry, getDataDir } from '../store.js';
-
-const TEST_DATA_DIR = path.join(import.meta.dirname, '../../../data-test');
+import Database from 'better-sqlite3';
+import { initSchema } from '../db.js';
+import { createStore } from '../store.js';
 
 describe('store', () => {
-  beforeEach(() => {
-    fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
-  });
+  let db;
+  let store;
 
-  afterEach(() => {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
+  beforeEach(() => {
+    db = new Database(':memory:');
+    initSchema(db);
+    store = createStore(db);
   });
 
   it('creates a JSONL file named by date', () => {
-    const entry = { lat: 33.99, lon: -117.87, type: 'location' };
-    appendEntry(entry, TEST_DATA_DIR);
+    const entry = { lat: 33.99, lon: -117.87, type: 'location', username: 'test', device: 'phone', received_at: new Date().toISOString() };
+    store.appendEntry(entry);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(TEST_DATA_DIR, `${today}.jsonl`);
-    assert.ok(fs.existsSync(filePath), 'JSONL file should exist');
+    const count = db.prepare('SELECT COUNT(*) as c FROM location_entries').get().c;
+    assert.equal(count, 1);
   });
 
   it('writes valid JSON on each line', () => {
-    const entry = { lat: 33.99, lon: -117.87, type: 'location' };
-    appendEntry(entry, TEST_DATA_DIR);
+    const entry = { lat: 33.99, lon: -117.87, type: 'location', username: 'test', device: 'phone', received_at: new Date().toISOString() };
+    store.appendEntry(entry);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(TEST_DATA_DIR, `${today}.jsonl`);
-    const line = fs.readFileSync(filePath, 'utf-8').trim();
-    const parsed = JSON.parse(line);
+    const row = db.prepare('SELECT * FROM location_entries').get();
+    assert.equal(row.lat, 33.99);
+    assert.equal(row.lon, -117.87);
+    assert.equal(row.type, 'location');
+    const parsed = JSON.parse(row.data);
     assert.equal(parsed.lat, 33.99);
-    assert.equal(parsed.lon, -117.87);
-    assert.equal(parsed.type, 'location');
   });
 
   it('appends multiple entries as separate lines', () => {
-    const entry1 = { lat: 33.99, lon: -117.87, type: 'location' };
-    const entry2 = { lat: 34.05, lon: -118.24, type: 'location' };
-    appendEntry(entry1, TEST_DATA_DIR);
-    appendEntry(entry2, TEST_DATA_DIR);
+    const entry1 = { lat: 33.99, lon: -117.87, type: 'location', username: 'test', device: 'phone', received_at: new Date().toISOString() };
+    const entry2 = { lat: 34.05, lon: -118.24, type: 'location', username: 'test', device: 'phone', received_at: new Date().toISOString() };
+    store.appendEntry(entry1);
+    store.appendEntry(entry2);
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(TEST_DATA_DIR, `${today}.jsonl`);
-    const lines = fs.readFileSync(filePath, 'utf-8').trim().split('\n');
-    assert.equal(lines.length, 2);
-    assert.equal(JSON.parse(lines[0]).lat, 33.99);
-    assert.equal(JSON.parse(lines[1]).lat, 34.05);
+    const rows = db.prepare('SELECT * FROM location_entries ORDER BY id').all();
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0].lat, 33.99);
+    assert.equal(rows[1].lat, 34.05);
   });
 
   it('creates data directory if it does not exist', () => {
-    const nested = path.join(TEST_DATA_DIR, 'nested');
-    const entry = { lat: 33.99, lon: -117.87, type: 'location' };
-    appendEntry(entry, nested);
-    assert.ok(fs.existsSync(nested), 'directory should be created');
+    // With SQLite, directory creation is handled by openDatabase, not the store
+    // Just verify the store works with an in-memory database
+    const entry = { lat: 33.99, lon: -117.87, type: 'location', username: 'test', device: 'phone', received_at: new Date().toISOString() };
+    store.appendEntry(entry);
+    const count = db.prepare('SELECT COUNT(*) as c FROM location_entries').get().c;
+    assert.equal(count, 1);
   });
 });

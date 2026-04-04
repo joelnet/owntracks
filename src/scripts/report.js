@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { loadConfig } from '../lib/config.js';
 import { generateReport } from '../lib/report.js';
+import { openDatabase, initSchema } from '../lib/db.js';
 
 const TIMEZONE = process.env.TZ || 'America/Los_Angeles';
 
@@ -15,9 +16,18 @@ if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
 
 const rootDir = path.join(import.meta.dirname, '..', '..');
 const config = loadConfig(path.join(rootDir, 'config.yml'));
-const dataDir = path.join(rootDir, 'data');
 
-const report = generateReport(date, config, dataDir, TIMEZONE);
+const db = openDatabase();
+initSchema(db);
+
+// Load learned POIs into config for report
+const learnedPois = db.prepare('SELECT * FROM learned_pois').all();
+for (const poi of learnedPois) {
+  config.poi.locations.push(poi);
+}
+
+const report = generateReport(date, config, db, TIMEZONE);
+db.close();
 
 if (!report) {
   console.error(`No location data found for ${date}`);

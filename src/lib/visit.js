@@ -69,6 +69,7 @@ export function createVisitDetector(config, savedState) {
     } else {
       learnedPois.push({
         name: `Unknown (${centroid.lat.toFixed(4)}, ${centroid.lon.toFixed(4)})`,
+        address: null,
         lat: centroid.lat,
         lon: centroid.lon,
         radius_m: learned_poi_radius_m,

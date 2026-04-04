@@ -1,23 +1,22 @@
 import { describe, it, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import Database from 'better-sqlite3';
+import { initSchema } from '../db.js';
 import { reverseGeocode } from '../geocode.js';
-
-const TMP_DIR = path.join(import.meta.dirname, '../../../tmp-geocode-test');
-const CACHE_FILE = path.join(TMP_DIR, 'geocode-cache.jsonl');
 
 describe('reverseGeocode', () => {
   let originalFetch;
+  let db;
 
   beforeEach(() => {
     originalFetch = global.fetch;
-    fs.mkdirSync(TMP_DIR, { recursive: true });
+    db = new Database(':memory:');
+    initSchema(db);
   });
 
   afterEach(() => {
     global.fetch = originalFetch;
-    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+    db.close();
   });
 
   describe('Nominatim API', () => {
@@ -26,19 +25,19 @@ describe('reverseGeocode', () => {
         ok: true,
         json: async () => ({ display_name: 'Target, 1234 E Foothill Blvd, Azusa, CA 91702, United States' }),
       });
-      const result = await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.equal(result, 'Target, 1234 E Foothill Blvd, Azusa, CA 91702, United States');
     });
 
     it('returns null on non-200 response', async () => {
       global.fetch = async () => ({ ok: false, status: 429 });
-      const result = await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.equal(result, null);
     });
 
     it('returns null on network error', async () => {
       global.fetch = async () => { throw new Error('network failure'); };
-      const result = await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.equal(result, null);
     });
 
@@ -47,7 +46,7 @@ describe('reverseGeocode', () => {
         ok: true,
         json: async () => ({ error: 'Unable to geocode' }),
       });
-      const result = await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.equal(result, null);
     });
 
@@ -59,7 +58,7 @@ describe('reverseGeocode', () => {
         capturedOptions = options;
         return { ok: true, json: async () => ({ display_name: 'Test Address' }) };
       };
-      await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.ok(capturedUrl.includes('lat=34.0297'));
       assert.ok(capturedUrl.includes('lon=-117.919'));
       assert.ok(capturedUrl.includes('format=json'));
@@ -72,8 +71,8 @@ describe('reverseGeocode', () => {
     it('returns cached address when within cache radius', async () => {
       let fetchCalled = false;
       global.fetch = async () => { fetchCalled = true; return { ok: true, json: async () => ({ display_name: 'Should Not Be Used' }) }; };
-      fs.writeFileSync(CACHE_FILE, JSON.stringify({ lat: 34.0297, lon: -117.9190, address: 'Cached Address', cached_at: '2026-04-01T00:00:00Z' }) + '\n');
-      const result = await reverseGeocode(34.0298, -117.9191, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      db.prepare('INSERT INTO geocode_cache (lat, lon, address, cached_at) VALUES (?, ?, ?, ?)').run(34.0297, -117.9190, 'Cached Address', '2026-04-01T00:00:00Z');
+      const result = await reverseGeocode(34.0298, -117.9191, { db, cacheRadiusM: 100 });
       assert.equal(result, 'Cached Address');
       assert.equal(fetchCalled, false);
     });
@@ -83,29 +82,28 @@ describe('reverseGeocode', () => {
         ok: true,
         json: async () => ({ display_name: 'New Place, 456 Oak Ave' }),
       });
-      const result = await reverseGeocode(34.0500, -117.9500, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0500, -117.9500, { db, cacheRadiusM: 100 });
       assert.equal(result, 'New Place, 456 Oak Ave');
-      const lines = fs.readFileSync(CACHE_FILE, 'utf-8').trim().split('\n');
-      assert.equal(lines.length, 1);
-      const cached = JSON.parse(lines[0]);
-      assert.equal(cached.lat, 34.05);
-      assert.equal(cached.lon, -117.95);
-      assert.equal(cached.address, 'New Place, 456 Oak Ave');
-      assert.ok(cached.cached_at);
+      const rows = db.prepare('SELECT * FROM geocode_cache').all();
+      assert.equal(rows.length, 1);
+      assert.equal(rows[0].lat, 34.05);
+      assert.equal(rows[0].lon, -117.95);
+      assert.equal(rows[0].address, 'New Place, 456 Oak Ave');
+      assert.ok(rows[0].cached_at);
     });
 
     it('does not write to cache on Nominatim failure', async () => {
       global.fetch = async () => ({ ok: false, status: 500 });
-      await reverseGeocode(34.0500, -117.9500, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
-      assert.equal(fs.existsSync(CACHE_FILE), false);
+      await reverseGeocode(34.0500, -117.9500, { db, cacheRadiusM: 100 });
+      const count = db.prepare('SELECT COUNT(*) as c FROM geocode_cache').get().c;
+      assert.equal(count, 0);
     });
 
     it('returns nearest cached entry when multiple are within radius', async () => {
       global.fetch = async () => { throw new Error('should not call'); };
-      const far = JSON.stringify({ lat: 34.0290, lon: -117.9190, address: 'Farther Place', cached_at: '2026-04-01T00:00:00Z' });
-      const near = JSON.stringify({ lat: 34.0297, lon: -117.9190, address: 'Nearest Place', cached_at: '2026-04-01T00:00:00Z' });
-      fs.writeFileSync(CACHE_FILE, far + '\n' + near + '\n');
-      const result = await reverseGeocode(34.0297, -117.9190, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      db.prepare('INSERT INTO geocode_cache (lat, lon, address, cached_at) VALUES (?, ?, ?, ?)').run(34.0290, -117.9190, 'Farther Place', '2026-04-01T00:00:00Z');
+      db.prepare('INSERT INTO geocode_cache (lat, lon, address, cached_at) VALUES (?, ?, ?, ?)').run(34.0297, -117.9190, 'Nearest Place', '2026-04-01T00:00:00Z');
+      const result = await reverseGeocode(34.0297, -117.9190, { db, cacheRadiusM: 100 });
       assert.equal(result, 'Nearest Place');
     });
 
@@ -114,7 +112,7 @@ describe('reverseGeocode', () => {
         ok: true,
         json: async () => ({ display_name: 'Fresh Lookup' }),
       });
-      const result = await reverseGeocode(34.0500, -117.9500, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      const result = await reverseGeocode(34.0500, -117.9500, { db, cacheRadiusM: 100 });
       assert.equal(result, 'Fresh Lookup');
     });
 
@@ -123,8 +121,8 @@ describe('reverseGeocode', () => {
         ok: true,
         json: async () => ({ display_name: 'Fresh Lookup' }),
       });
-      fs.writeFileSync(CACHE_FILE, '');
-      const result = await reverseGeocode(34.0500, -117.9500, { cacheFile: CACHE_FILE, cacheRadiusM: 100 });
+      // Empty database table is the equivalent of empty cache file
+      const result = await reverseGeocode(34.0500, -117.9500, { db, cacheRadiusM: 100 });
       assert.equal(result, 'Fresh Lookup');
     });
   });

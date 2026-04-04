@@ -1,7 +1,8 @@
 import { describe, it, before, beforeEach, afterEach, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import path from 'node:path';
+import Database from 'better-sqlite3';
+import { initSchema } from '../lib/db.js';
+import { createStore } from '../lib/store.js';
 
 const locationCalls = [];
 mock.module('../lib/logger.js', {
@@ -16,7 +17,6 @@ mock.module('../lib/logger.js', {
 const { createApp } = await import('../server.js');
 const { default: request } = await import('supertest');
 
-const TEST_DATA_DIR = path.join(import.meta.dirname, '../../data-test-server');
 const TEST_USER = 'joel';
 const TEST_PASS = 'secret123';
 
@@ -24,24 +24,28 @@ function basicAuth(user, pass) {
   return 'Basic ' + Buffer.from(`${user}:${pass}`).toString('base64');
 }
 
+function createTestStore() {
+  const db = new Database(':memory:');
+  initSchema(db);
+  return { store: createStore(db), db };
+}
+
 describe('POST /pub', () => {
   let app;
+  let testDb;
 
   before(() => {
+    const { store, db } = createTestStore();
+    testDb = db;
     app = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
     });
   });
 
   beforeEach(() => {
-    fs.mkdirSync(TEST_DATA_DIR, { recursive: true });
     locationCalls.length = 0;
-  });
-
-  afterEach(() => {
-    fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
   });
 
   it('returns 401 with no auth header', async () => {
@@ -70,16 +74,20 @@ describe('POST /pub', () => {
   });
 
   it('stores the location in a JSONL file', async () => {
-    await request(app)
+    const { store, db } = createTestStore();
+    const testApp = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      store,
+    });
+    await request(testApp)
       .post('/pub')
       .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
       .set('X-Limit-D', 'myphone')
       .send({ _type: 'location', lat: 33.99, lon: -117.87, tst: 1711036800, acc: 15 });
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(TEST_DATA_DIR, `${today}.jsonl`);
-    const line = fs.readFileSync(filePath, 'utf-8').trim();
-    const parsed = JSON.parse(line);
+    const row = db.prepare('SELECT * FROM location_entries').get();
+    const parsed = JSON.parse(row.data);
 
     assert.equal(parsed.username, TEST_USER);
     assert.equal(parsed.device, 'myphone');
@@ -90,14 +98,19 @@ describe('POST /pub', () => {
   });
 
   it('uses "phone" as default device when X-Limit-D is missing', async () => {
-    await request(app)
+    const { store, db } = createTestStore();
+    const testApp = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      store,
+    });
+    await request(testApp)
       .post('/pub')
       .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
       .send({ _type: 'location', lat: 33.99, lon: -117.87, tst: 1711036800 });
 
-    const today = new Date().toISOString().slice(0, 10);
-    const filePath = path.join(TEST_DATA_DIR, `${today}.jsonl`);
-    const parsed = JSON.parse(fs.readFileSync(filePath, 'utf-8').trim());
+    const row = db.prepare('SELECT * FROM location_entries').get();
+    const parsed = JSON.parse(row.data);
     assert.equal(parsed.device, 'phone');
   });
 
@@ -122,10 +135,11 @@ describe('POST /pub', () => {
     const detector = {
       detect: () => { throw new Error('should not be called'); },
     };
+    const { store } = createTestStore();
     const appWithDetector = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
     });
     const res = await request(appWithDetector)
@@ -144,10 +158,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithDiscord = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       discord,
     });
@@ -167,10 +182,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithDiscord = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       discord,
     });
@@ -189,10 +205,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithDiscord = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       discord,
     });
@@ -212,10 +229,11 @@ describe('POST /pub', () => {
       },
       getFullState: () => ({}),
     };
+    const { store } = createTestStore();
     const appWithActivity = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       activity,
     });
     await request(appWithActivity)
@@ -238,10 +256,11 @@ describe('POST /pub', () => {
       },
       getFullState: () => ({}),
     };
+    const { store } = createTestStore();
     const appWithActivity = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       activity,
     });
     await request(appWithActivity)
@@ -260,10 +279,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithActivity = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       activity,
       activityConfig: { discord_notifications: true },
       discord,
@@ -285,10 +305,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithActivity = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       activity,
       activityConfig: { discord_notifications: false },
       discord,
@@ -313,10 +334,11 @@ describe('POST /pub', () => {
     const discord = {
       notify: (msg) => notified.push(msg),
     };
+    const { store } = createTestStore();
     const appWithBoth = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       activityConfig: { discord_notifications: true },
@@ -339,10 +361,11 @@ describe('POST /pub', () => {
       getFullState: () => fullState,
     };
     const onActivityPersist = (state) => persistCalls.push(state);
+    const { store } = createTestStore();
     const appWithPersist = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       activity,
       onActivityPersist,
     });
@@ -374,10 +397,11 @@ describe('POST /pub', () => {
       getState: () => 'STATIONARY',
       getFullState: () => ({}),
     };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -414,10 +438,11 @@ describe('POST /pub', () => {
       getFullState: () => ({}),
     };
     const discord = { notify: (msg) => notified.push(msg) };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -454,10 +479,11 @@ describe('POST /pub', () => {
       getFullState: () => ({}),
     };
     const discord = { notify: (msg) => notified.push(msg) };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -496,10 +522,11 @@ describe('POST /pub', () => {
       getFullState: () => ({}),
     };
     const discord = { notify: (msg) => notified.push(msg) };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -535,10 +562,11 @@ describe('POST /pub', () => {
       getFullState: () => ({}),
     };
     const discord = { notify: (msg) => notified.push(msg) };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -571,10 +599,11 @@ describe('POST /pub', () => {
       getFullState: () => ({}),
     };
     const onVisitPersist = (state, pois) => persistCalls.push({ state, pois });
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       activity,
       visit,
@@ -596,10 +625,11 @@ describe('POST /pub', () => {
       getState: () => ({ active: false }),
       getLearnedPois: () => [],
     };
+    const { store } = createTestStore();
     const appWithVisit = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       visit,
     });
     await request(appWithVisit)
@@ -615,10 +645,11 @@ describe('POST /pub', () => {
       detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
       resetPending: () => { resetCalled = true; },
     };
+    const { store } = createTestStore();
     const appWithFilter = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       maxAccuracy: 30,
     });
@@ -635,10 +666,11 @@ describe('POST /pub', () => {
       detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
       resetPending: () => { resetCalled = true; },
     };
+    const { store } = createTestStore();
     const appWithFilter = createApp({
       username: TEST_USER,
       password: TEST_PASS,
-      dataDir: TEST_DATA_DIR,
+      store,
       detector,
       maxAccuracy: 30,
     });

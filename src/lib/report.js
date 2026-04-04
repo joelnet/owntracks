@@ -1,16 +1,7 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { createPOIDetector, haversineDistance } from './poi.js';
 import { createActivityDetector } from './activity.js';
 
 // --- Helpers ---
-
-function readJSONL(filePath) {
-  try {
-    return fs.readFileSync(filePath, 'utf-8')
-      .trim().split('\n').filter(Boolean).map(l => JSON.parse(l));
-  } catch { return []; }
-}
 
 function toLocalDate(tst, tz) {
   return new Date(tst * 1000).toLocaleDateString('en-CA', { timeZone: tz });
@@ -44,7 +35,7 @@ function adjacentDate(dateStr, offset) {
  * Generate a daily location/activity report.
  * Returns the report as a string, or null if no data found.
  */
-export function generateReport(date, config, dataDir, timezone) {
+export function generateReport(date, config, db, timezone) {
   const tz = timezone || process.env.TZ || 'America/Los_Angeles';
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -53,12 +44,18 @@ export function generateReport(date, config, dataDir, timezone) {
 
   const maxAccuracy = config.max_accuracy_m;
 
-  // Load entries spanning the local date (up to 3 UTC files)
-  const fileDates = [adjacentDate(date, -1), date, adjacentDate(date, 1)];
-  const allEntries = fileDates.flatMap(d => readJSONL(path.join(dataDir, `${d}.jsonl`)));
+  // Query entries spanning the local date (3-day UTC window to cover timezone offsets)
+  const prevDate = adjacentDate(date, -1);
+  const nextDate = adjacentDate(date, 1);
+  const startTst = Math.floor(new Date(prevDate + 'T00:00:00Z').getTime() / 1000);
+  const endTst = Math.floor(new Date(nextDate + 'T23:59:59Z').getTime() / 1000);
+
+  const allEntries = db.prepare(
+    'SELECT data FROM location_entries WHERE type = ? AND lat IS NOT NULL AND lon IS NOT NULL AND tst >= ? AND tst <= ? ORDER BY tst'
+  ).all('location', startTst, endTst).map(row => JSON.parse(row.data));
 
   const locationEntries = allEntries
-    .filter(e => e.type === 'location' && typeof e.lat === 'number' && typeof e.lon === 'number')
+    .filter(e => typeof e.lat === 'number' && typeof e.lon === 'number')
     .filter(e => !maxAccuracy || typeof e.acc !== 'number' || e.acc <= maxAccuracy)
     .sort((a, b) => a.tst - b.tst);
 
