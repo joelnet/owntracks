@@ -94,5 +94,9 @@ export function createPOIDetector(config) {
       pendingCount = 0;
       pendingStartTime = null;
     },
+
+    addLocation(poi) {
+      locations.push(poi);
+    },
   };
 }

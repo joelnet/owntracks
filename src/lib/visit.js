@@ -154,5 +154,14 @@ export function createVisitDetector(config, savedState) {
     loadLearnedPois(pois) {
       learnedPois = pois.map(p => ({ ...p }));
     },
+    renameLearnedPoi(lat, lon, name) {
+      const poi = learnedPois.find(p =>
+        Math.abs(p.lat - lat) < 0.001 && Math.abs(p.lon - lon) < 0.001
+      );
+      if (poi) {
+        poi.name = name;
+        poi.address = name;
+      }
+    },
   };
 }

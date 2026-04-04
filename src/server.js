@@ -134,6 +134,27 @@ export function createApp({ username, password, dataDir, detector, discord, acti
         activityState
       );
 
+      // Geocode and rename learned POI before persisting
+      let geocodedAddress = null;
+      if (visitResult?.type === 'visit_started' && reverseGeocode) {
+        geocodedAddress = await reverseGeocode(visitResult.centroid.lat, visitResult.centroid.lon);
+        if (geocodedAddress && visitConfig?.learn_pois) {
+          visit.renameLearnedPoi(visitResult.centroid.lat, visitResult.centroid.lon, geocodedAddress);
+        }
+      }
+
+      // Sync newly learned POI to the POI detector so it's recognized immediately
+      if (visitResult?.type === 'visit_started' && visitConfig?.learn_pois && detector) {
+        const currentPois = visit.getLearnedPois();
+        const newPoi = currentPois.find(p =>
+          Math.abs(p.lat - visitResult.centroid.lat) < 0.001 &&
+          Math.abs(p.lon - visitResult.centroid.lon) < 0.001
+        );
+        if (newPoi) {
+          detector.addLocation(newPoi);
+        }
+      }
+
       if (onVisitPersist) {
         try {
           onVisitPersist(visit.getState(), visit.getLearnedPois());
@@ -144,11 +165,8 @@ export function createApp({ username, password, dataDir, detector, discord, acti
 
       if (visitResult && visitConfig?.discord_notifications && discord) {
         if (visitResult.type === 'visit_started') {
-          const address = reverseGeocode
-            ? await reverseGeocode(visitResult.centroid.lat, visitResult.centroid.lon)
-            : null;
-          if (address) {
-            discord.notify(`POI Lookup at ${address}`);
+          if (geocodedAddress) {
+            discord.notify(`POI Lookup at ${geocodedAddress}`);
           } else {
             discord.notify(`POI Lookup failed for (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
           }
