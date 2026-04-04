@@ -392,7 +392,7 @@ describe('POST /pub', () => {
     assert.equal(visitCalls[0].activityState, 'STATIONARY');
   });
 
-  it('sends Discord notification on visit_started event', async () => {
+  it('sends Discord notification on visit_started event with geocoded address', async () => {
     const notified = [];
     const visit = {
       processPoint: () => ({
@@ -423,12 +423,53 @@ describe('POST /pub', () => {
       visit,
       visitConfig: { discord_notifications: true },
       discord,
+      reverseGeocode: async () => 'Target, 1234 E Foothill Blvd, Azusa, CA',
     });
     await request(appWithVisit)
       .post('/pub')
       .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
       .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
-    assert.ok(notified.some(msg => msg.includes('POI Lookup')));
+    assert.ok(notified.some(msg => msg === 'POI Lookup at Target, 1234 E Foothill Blvd, Azusa, CA'));
+  });
+
+  it('sends failure message when reverseGeocode returns null', async () => {
+    const notified = [];
+    const visit = {
+      processPoint: () => ({
+        type: 'visit_started',
+        centroid: { lat: 34.0500, lon: -117.9500 },
+        started_at: '2026-03-29T14:30:00Z',
+      }),
+      getState: () => ({ active: true }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const discord = { notify: (msg) => notified.push(msg) };
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      dataDir: TEST_DATA_DIR,
+      detector,
+      activity,
+      visit,
+      visitConfig: { discord_notifications: true },
+      discord,
+      reverseGeocode: async () => null,
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.ok(notified.some(msg => msg === 'POI Lookup failed for (34.0500, -117.9500)'));
   });
 
   it('sends Discord notification on visit_ended event', async () => {

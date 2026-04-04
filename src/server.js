@@ -17,12 +17,12 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy } = {}) {
+export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode } = {}) {
   const app = express();
 
   app.use(express.json());
 
-  app.post("/pub", (req, res) => {
+  app.post("/pub", async (req, res) => {
     // Validate Basic Auth
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Basic ")) {
@@ -143,7 +143,14 @@ export function createApp({ username, password, dataDir, detector, discord, acti
 
       if (visitResult && visitConfig?.discord_notifications && discord) {
         if (visitResult.type === 'visit_started') {
-          discord.notify(`POI Lookup at (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
+          const address = reverseGeocode
+            ? await reverseGeocode(visitResult.centroid.lat, visitResult.centroid.lon)
+            : null;
+          if (address) {
+            discord.notify(`POI Lookup at ${address}`);
+          } else {
+            discord.notify(`POI Lookup failed for (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
+          }
         }
         if (visitResult.type === 'visit_ended') {
           discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
