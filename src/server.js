@@ -10,6 +10,7 @@ import { createPOIDetector } from "./lib/poi.js";
 import { createDiscordClient } from "./lib/discord.js";
 import { createActivityDetector } from "./lib/activity.js";
 import { createVisitDetector } from "./lib/visit.js";
+import { reverseGeocode as nominatimGeocode } from "./lib/geocode.js";
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -315,8 +316,16 @@ if (isDirectRun) {
     };
   }
 
+  // Build geocode function if configured
+  let reverseGeocode;
+  if (config.geocode) {
+    const geocodeCacheFile = path.join(import.meta.dirname, '..', 'data', 'geocode-cache.jsonl');
+    const geocodeCacheRadiusM = config.geocode.cache_radius_m;
+    reverseGeocode = (lat, lon) => nominatimGeocode(lat, lon, { cacheFile: geocodeCacheFile, cacheRadiusM: geocodeCacheRadiusM });
+  }
+
   const maxAccuracy = config.max_accuracy_m;
-  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy });
+  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
