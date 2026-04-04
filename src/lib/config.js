@@ -83,5 +83,10 @@ export function loadConfig(filePath) {
     if (typeof visit_detection.learned_poi_radius_m !== 'number' || visit_detection.learned_poi_radius_m <= 0) throw new Error('visit_detection.learned_poi_radius_m must be a positive number');
   }
 
+  if (config.geocode !== undefined) {
+    const { geocode } = config;
+    if (typeof geocode.cache_radius_m !== 'number' || geocode.cache_radius_m <= 0) throw new Error('geocode.cache_radius_m must be a positive number');
+  }
+
   return config;
 }

@@ -37,3 +37,6 @@ visit_detection:
   discord_notifications: true
   learn_pois: true
   learned_poi_radius_m: 100
+
+geocode:
+  cache_radius_m: 100
