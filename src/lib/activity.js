@@ -99,6 +99,18 @@ export function createActivityDetector(config) {
         }
       }
 
+      // Reverse displacement check: if phone velocity reports slow/stationary
+      // but GPS positions show significant movement, trust GPS displacement.
+      // Catches vel=0 artifacts during driving and brief stops (stop signs,
+      // red lights) that shouldn't break a continuous drive.
+      if (windowTime > 0 && medianSpeed < walking_max_kmh) {
+        const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
+        const displacementSpeed = (displacement / windowTime) * 3.6;
+        if (displacementSpeed >= driving_min_kmh) {
+          medianSpeed = displacementSpeed;
+        }
+      }
+
       const latestTimestamp = window[window.length - 1].timestamp;
       const candidate = classify(medianSpeed, latestTimestamp);
 
