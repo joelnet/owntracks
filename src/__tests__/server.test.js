@@ -540,6 +540,49 @@ describe('POST /pub', () => {
     assert.ok(notified.some(msg => msg.includes('Left unknown location') && msg.includes('45 min')));
   });
 
+  it('sends Discord notification on visit_ended event with geocoded address', async () => {
+    const notified = [];
+    const visit = {
+      processPoint: () => ({
+        type: 'visit_ended',
+        centroid: { lat: 34.0500, lon: -117.9500 },
+        started_at: '2026-03-29T14:30:00Z',
+        ended_at: '2026-03-29T15:15:00Z',
+        duration_minutes: 45,
+      }),
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
+      resolveLocation: () => 'Roaming',
+    };
+    const activity = {
+      update: () => ({ changed: false, state: 'DRIVING', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'DRIVING',
+      getFullState: () => ({}),
+    };
+    const discord = { notify: (msg) => notified.push(msg) };
+    const { store } = createTestStore();
+    const appWithVisit = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      store,
+      detector,
+      activity,
+      visit,
+      visitConfig: { discord_notifications: true },
+      discord,
+      reverseGeocode: async () => 'Costco, 2000 Market Place Drive, Monterey Park, CA',
+    });
+    await request(appWithVisit)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst: 1711036800 });
+    assert.ok(notified.some(msg => msg === 'Left Costco, 2000 Market Place Drive, Monterey Park, CA — 45 min visit'));
+  });
+
   it('does not send visit Discord notification when discord_notifications is false', async () => {
     const notified = [];
     const visit = {

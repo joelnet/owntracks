@@ -137,9 +137,9 @@ export function createApp({ username, password, store, detector, discord, activi
 
       // Geocode and rename learned POI before persisting
       let geocodedAddress = null;
-      if (visitResult?.type === 'visit_started' && reverseGeocode) {
+      if ((visitResult?.type === 'visit_started' || visitResult?.type === 'visit_ended') && reverseGeocode) {
         geocodedAddress = await reverseGeocode(visitResult.centroid.lat, visitResult.centroid.lon);
-        if (geocodedAddress && visitConfig?.learn_pois) {
+        if (geocodedAddress && visitResult.type === 'visit_started' && visitConfig?.learn_pois) {
           visit.renameLearnedPoi(visitResult.centroid.lat, visitResult.centroid.lon, geocodedAddress);
         }
       }
@@ -173,7 +173,11 @@ export function createApp({ username, password, store, detector, discord, activi
           }
         }
         if (visitResult.type === 'visit_ended') {
-          discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
+          if (geocodedAddress) {
+            discord.notify(`Left ${geocodedAddress} — ${visitResult.duration_minutes} min visit`);
+          } else {
+            discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
+          }
         }
       }
     }
