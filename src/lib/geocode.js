@@ -1,23 +1,8 @@
-import fs from 'node:fs';
 import { haversineDistance } from './poi.js';
 
-function readCache(cacheFile) {
-  try {
-    const content = fs.readFileSync(cacheFile, 'utf-8').trim();
-    if (!content) return [];
-    return content.split('\n').map(line => JSON.parse(line));
-  } catch {
-    return [];
-  }
-}
-
-function appendCache(cacheFile, entry) {
-  fs.appendFileSync(cacheFile, JSON.stringify(entry) + '\n');
-}
-
-export async function reverseGeocode(lat, lon, { cacheFile, cacheRadiusM }) {
+export async function reverseGeocode(lat, lon, { db, cacheRadiusM }) {
   // Check cache first
-  const entries = readCache(cacheFile);
+  const entries = db.prepare('SELECT lat, lon, address FROM geocode_cache').all();
   let nearest = null;
   let nearestDist = Infinity;
   for (const entry of entries) {
@@ -39,12 +24,8 @@ export async function reverseGeocode(lat, lon, { cacheFile, cacheRadiusM }) {
     const data = await response.json();
     if (!data.display_name) return null;
 
-    appendCache(cacheFile, {
-      lat,
-      lon,
-      address: data.display_name,
-      cached_at: new Date().toISOString(),
-    });
+    db.prepare('INSERT INTO geocode_cache (lat, lon, address, cached_at) VALUES (?, ?, ?, ?)')
+      .run(lat, lon, data.display_name, new Date().toISOString());
 
     return data.display_name;
   } catch {
