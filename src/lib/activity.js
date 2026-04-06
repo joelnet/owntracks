@@ -103,11 +103,18 @@ export function createActivityDetector(config) {
       // but GPS positions show significant movement, trust GPS displacement.
       // Catches vel=0 artifacts during driving and brief stops (stop signs,
       // red lights) that shouldn't break a continuous drive.
+      // Skip when ALL window points report vel=0 — the phone is confident
+      // the device is stationary; large displacement is a GPS location jump.
       if (windowTime > 0 && medianSpeed < walking_max_kmh) {
-        const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
-        const displacementSpeed = (displacement / windowTime) * 3.6;
-        if (displacementSpeed >= driving_min_kmh) {
-          medianSpeed = displacementSpeed;
+        const velValues = window.map(p =>
+          typeof p.vel === 'number' && p.vel >= 0 ? p.vel : null);
+        const allZero = velValues.every(v => v === 0);
+        if (!allZero) {
+          const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
+          const displacementSpeed = (displacement / windowTime) * 3.6;
+          if (displacementSpeed >= driving_min_kmh) {
+            medianSpeed = displacementSpeed;
+          }
         }
       }
 

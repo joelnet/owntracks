@@ -177,7 +177,8 @@ export function generateReport(date, config, db, timezone) {
   lines.push('-'.repeat(30));
 
   const locationSpans = [];
-  let currentLoc = events[0].location;
+  const startEvent = events.find(e => e.type === 'start');
+  let currentLoc = startEvent.location;
   let spanStart = dayEntries[0].tst;
 
   for (const ev of events) {

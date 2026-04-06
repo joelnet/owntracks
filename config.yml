@@ -19,8 +19,8 @@ poi:
       lon: -117.849966
       radius_m: 100
     - name: Mom's House
-      lat: 34.0709362
-      lon: -118.1013455
+      lat: 33.7245
+      lon: -117.9759
 
 activity:
   enabled: true
