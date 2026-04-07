@@ -26,7 +26,7 @@ for (const poi of learnedPois) {
   config.poi.locations.push(poi);
 }
 
-const report = generateReport(date, config, db, TIMEZONE);
+const report = await generateReport(date, config, db, TIMEZONE);
 db.close();
 
 if (!report) {

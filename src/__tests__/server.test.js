@@ -723,4 +723,100 @@ describe('POST /pub', () => {
       .send({ _type: 'location', lat: 34.017, lon: -117.902, acc: 10, tst: 1711036800 });
     assert.equal(resetCalled, false);
   });
+
+  it('substitutes server time when phone re-sends the same tst (stale GPS fix)', async () => {
+    const activityCalls = [];
+    const visitCalls = [];
+    const activity = {
+      update: (lat, lon, tst, vel) => {
+        activityCalls.push({ lat, lon, tst, vel });
+        return { changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false };
+      },
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const visit = {
+      processPoint: (point, poiResult, activityState) => {
+        visitCalls.push({ point, poiResult, activityState });
+        return null;
+      },
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const detector = {
+      detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      resolveLocation: () => 'Roaming',
+    };
+    const { store } = createTestStore();
+    const staleTstApp = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      store,
+      detector,
+      activity,
+      visit,
+    });
+
+    const staleTst = 1711036800;
+
+    // First request: tst is new, passed through unchanged
+    await request(staleTstApp)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 33.996, lon: -117.930, tst: staleTst, vel: 0 });
+
+    assert.equal(activityCalls[0].tst, staleTst);
+    assert.equal(visitCalls[0].point.tst, staleTst);
+
+    // Second request: same tst re-sent — detectors should get a different (server) timestamp
+    await request(staleTstApp)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 33.996, lon: -117.930, tst: staleTst, vel: 0 });
+
+    assert.notEqual(activityCalls[1].tst, staleTst, 'stale tst should be substituted for activity');
+    assert.notEqual(visitCalls[1].point.tst, staleTst, 'stale tst should be substituted for visit');
+    assert.ok(activityCalls[1].tst > staleTst, 'substituted tst should be a recent server timestamp');
+
+    // Third request: new tst — passed through unchanged
+    const newTst = 1711040400;
+    await request(staleTstApp)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 33.997, lon: -117.926, tst: newTst, vel: 0 });
+
+    assert.equal(activityCalls[2].tst, newTst, 'new tst should be passed through');
+    assert.equal(visitCalls[2].point.tst, newTst, 'new tst should be passed through for visit');
+  });
+
+  it('stores original tst in database even when substituted', async () => {
+    const activity = {
+      update: () => ({ changed: false, state: 'STATIONARY', previousState: 'STATIONARY', initialClassification: false }),
+      getState: () => 'STATIONARY',
+      getFullState: () => ({}),
+    };
+    const { store, db } = createTestStore();
+    const staleTstApp = createApp({
+      username: TEST_USER,
+      password: TEST_PASS,
+      store,
+      activity,
+    });
+
+    const staleTst = 1711050000;
+
+    // Send twice with the same tst
+    await request(staleTstApp)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 33.996, lon: -117.930, tst: staleTst, vel: 0 });
+    await request(staleTstApp)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 33.996, lon: -117.930, tst: staleTst, vel: 0 });
+
+    const rows = db.prepare('SELECT tst FROM location_entries ORDER BY id').all();
+    assert.equal(rows[0].tst, staleTst, 'first entry stores original tst');
+    assert.equal(rows[1].tst, staleTst, 'second entry stores original tst (not substituted)');
+  });
 });

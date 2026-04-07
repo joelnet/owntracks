@@ -21,6 +21,7 @@ function safeEqual(a, b) {
 
 export function createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode } = {}) {
   const app = express();
+  let lastProcessedTst = null;
 
   app.use(express.json());
 
@@ -72,13 +73,23 @@ export function createApp({ username, password, store, detector, discord, activi
       return res.status(200).json([]);
     }
 
+    // When the phone can't get a fresh GPS fix (e.g. indoors), OwnTracks
+    // re-sends the last known position with the same tst. Substitute server
+    // time so detectors see time progressing while the user is stationary.
+    let effectiveTst = entry.tst;
+    if (typeof entry.tst === 'number' && entry.tst === lastProcessedTst) {
+      effectiveTst = Math.floor(Date.now() / 1000);
+    } else if (typeof entry.tst === 'number') {
+      lastProcessedTst = entry.tst;
+    }
+
     // POI detection
     if (
       detector &&
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const result = detector.detect(entry.lat, entry.lon, entry.tst, entry.vel);
+      const result = detector.detect(entry.lat, entry.lon, effectiveTst, entry.vel);
       if (result.changed) {
         log.location(`Location: ${result.location}`);
 
@@ -98,7 +109,7 @@ export function createApp({ username, password, store, detector, discord, activi
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
+      const activityResult = activity.update(entry.lat, entry.lon, effectiveTst, entry.vel);
 
       if (activityResult.changed || activityResult.initialClassification || activityResult.gapTransition) {
         if (onActivityPersist) {
@@ -130,7 +141,7 @@ export function createApp({ username, password, store, detector, discord, activi
       const poiResult = detector ? detector.resolveLocation(entry.lat, entry.lon) : 'Roaming';
       const activityState = activity ? activity.getState() : 'UNKNOWN';
       const visitResult = visit.processPoint(
-        { lat: entry.lat, lon: entry.lon, tst: entry.tst },
+        { lat: entry.lat, lon: entry.lon, tst: effectiveTst },
         poiResult,
         activityState
       );

@@ -1,5 +1,7 @@
 import { createPOIDetector, haversineDistance } from './poi.js';
 import { createActivityDetector } from './activity.js';
+import { createVisitDetector } from './visit.js';
+import { reverseGeocode } from './geocode.js';
 
 // --- Helpers ---
 
@@ -31,11 +33,22 @@ function adjacentDate(dateStr, offset) {
   return d.toISOString().slice(0, 10);
 }
 
+function createStaleTstTracker() {
+  let lastTst = null;
+  return function effectiveTst(entry) {
+    if (typeof entry.tst === 'number' && entry.tst === lastTst) {
+      return Math.floor(new Date(entry.received_at).getTime() / 1000);
+    }
+    if (typeof entry.tst === 'number') lastTst = entry.tst;
+    return entry.tst;
+  };
+}
+
 /**
  * Generate a daily location/activity report.
  * Returns the report as a string, or null if no data found.
  */
-export function generateReport(date, config, db, timezone) {
+export async function generateReport(date, config, db, timezone) {
   const tz = timezone || process.env.TZ || 'America/Los_Angeles';
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -71,10 +84,25 @@ export function generateReport(date, config, db, timezone) {
   const activity = config.activity?.enabled
     ? createActivityDetector(config.activity)
     : null;
+  const visitConfig = config.visit_detection;
+  const visit = visitConfig?.enabled !== false
+    ? createVisitDetector(visitConfig || {
+        containment_radius_m: 200, min_dwell_minutes: 5,
+        exit_timeout_minutes: 3, learn_pois: true, learned_poi_radius_m: 100,
+      })
+    : null;
+
+  const effectiveTst = createStaleTstTracker();
 
   for (const e of seedEntries) {
-    poi.detect(e.lat, e.lon);
-    if (activity) activity.update(e.lat, e.lon, e.tst, e.vel);
+    const tst = effectiveTst(e);
+    poi.detect(e.lat, e.lon, tst);
+    if (activity) activity.update(e.lat, e.lon, tst, e.vel);
+    if (visit) {
+      const poiLoc = poi.resolveLocation(e.lat, e.lon);
+      const actState = activity?.getState() ?? 'UNKNOWN';
+      visit.processPoint({ lat: e.lat, lon: e.lon, tst }, poiLoc, actState);
+    }
   }
 
   const events = [];
@@ -90,18 +118,20 @@ export function generateReport(date, config, db, timezone) {
   });
 
   for (const e of dayEntries) {
+    const tst = effectiveTst(e);
+
     // Accumulate distance to current activity state before updating
     if (prevPoint && trackingState && trackingState !== 'UNKNOWN') {
       const d = haversineDistance(prevPoint.lat, prevPoint.lon, e.lat, e.lon);
       distanceByState[trackingState] = (distanceByState[trackingState] || 0) + d;
     }
 
-    const poiResult = poi.detect(e.lat, e.lon);
-    const actResult = activity?.update(e.lat, e.lon, e.tst, e.vel);
+    const poiResult = poi.detect(e.lat, e.lon, tst);
+    const actResult = activity?.update(e.lat, e.lon, tst, e.vel);
 
     if (poiResult.changed) {
       events.push({
-        tst: e.tst,
+        tst,
         type: 'poi',
         location: poiResult.location,
         previousLocation: poiResult.previousLocation,
@@ -121,11 +151,27 @@ export function generateReport(date, config, db, timezone) {
     if (actResult && (actResult.changed || actResult.initialClassification)) {
       trackingState = actResult.state;
       events.push({
-        tst: e.tst,
+        tst,
         type: 'activity',
         state: actResult.state,
         previousState: actResult.previousState,
       });
+    }
+
+    // Visit detection
+    if (visit) {
+      const poiLoc = poi.resolveLocation(e.lat, e.lon);
+      const actState = activity?.getState() ?? 'UNKNOWN';
+      const visitResult = visit.processPoint({ lat: e.lat, lon: e.lon, tst }, poiLoc, actState);
+      if (visitResult) {
+        events.push({
+          tst,
+          type: 'visit',
+          visitType: visitResult.type,
+          centroid: visitResult.centroid,
+          duration_minutes: visitResult.duration_minutes,
+        });
+      }
     }
 
     prevPoint = { lat: e.lat, lon: e.lon };
@@ -137,6 +183,21 @@ export function generateReport(date, config, db, timezone) {
     location: poi.getLocation(),
     activity: activity?.getState() ?? 'N/A',
   });
+
+  // Geocode visit events
+  const geocodeConfig = config.geocode;
+  for (const ev of events.filter(e => e.type === 'visit')) {
+    if (geocodeConfig && db) {
+      try {
+        ev.address = await reverseGeocode(ev.centroid.lat, ev.centroid.lon, {
+          db, cacheRadiusM: geocodeConfig.cache_radius_m || 100,
+        });
+      } catch { /* geocode failure is non-fatal */ }
+    }
+    if (!ev.address) {
+      ev.address = `(${ev.centroid.lat.toFixed(4)}, ${ev.centroid.lon.toFixed(4)})`;
+    }
+  }
 
   events.sort((a, b) => a.tst - b.tst || (a.type === 'start' ? -1 : b.type === 'start' ? 1 : 0));
 
@@ -165,6 +226,13 @@ export function generateReport(date, config, db, timezone) {
       case 'activity':
         lines.push(`${time}  │  → ${fmtState(ev.state)}`);
         break;
+      case 'visit':
+        if (ev.visitType === 'visit_started') {
+          lines.push(`${time}  ├ Visited ${ev.address}`);
+        } else if (ev.visitType === 'visit_ended') {
+          lines.push(`${time}  ├ Left ${ev.address} (${ev.duration_minutes}m visit)`);
+        }
+        break;
       case 'end':
         lines.push(`${time}  └ Day ends — ${ev.location} (${fmtState(ev.activity)})`);
         break;
@@ -185,6 +253,10 @@ export function generateReport(date, config, db, timezone) {
     if (ev.type === 'poi') {
       locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
       currentLoc = ev.location;
+      spanStart = ev.tst;
+    } else if (ev.type === 'visit') {
+      locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
+      currentLoc = ev.visitType === 'visit_started' ? ev.address : 'Roaming';
       spanStart = ev.tst;
     }
   }

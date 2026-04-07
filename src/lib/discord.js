@@ -82,7 +82,7 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
           }
         }
 
-        const report = generateReport(date, reportConfig, db, tz);
+        const report = await generateReport(date, reportConfig, db, tz);
 
         if (!report) {
           await interaction.editReply(`No location data found for ${date}`);
