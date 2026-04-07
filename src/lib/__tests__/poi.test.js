@@ -276,6 +276,67 @@ describe('POI resetPending', () => {
   });
 });
 
+describe('POI vel=0 exit prevention', () => {
+  function makeDebounceConfig(locations, points, defaultRadius = 100) {
+    return {
+      poi: { default_radius_m: defaultRadius, min_transition_points: points, locations },
+    };
+  }
+
+  it('vel=0 at a known POI resets pending exit and keeps location', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    // Phone confirms stationary — should reset pending exit
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060, 0);
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+    // Next point without vel=0 starts fresh (pending 1, not 3)
+    const r2 = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1090);
+    assert.equal(r2.changed, false);
+    assert.equal(r2.location, 'Home');
+  });
+
+  it('vel=0 does not block arrivals at a POI', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 1));
+    // Start roaming, arrive at Home with vel=0 (standing still at destination)
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('vel undefined does not interfere with normal exit detection', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // vel=undefined, pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060); // pending 3 → fires
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+  });
+
+  it('vel > 0 does not interfere with normal exit detection', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000, 15); // pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030, 15); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060, 15); // pending 3 → fires
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+  });
+
+  it('vel=-1 (unavailable) does not interfere with normal exit detection', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000, -1); // vel unavailable, pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030, -1); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060, -1); // pending 3 → fires
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+  });
+});
+
 describe('POI min_transition_seconds', () => {
   function makeTimeConfig(locations, points, seconds, defaultRadius = 100) {
     return {

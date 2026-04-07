@@ -38,7 +38,16 @@ export function createPOIDetector(config) {
   }
 
   return {
-    detect(lat, lon, tst) {
+    detect(lat, lon, tst, vel) {
+      // If at a known POI and phone confirms stationary (vel=0),
+      // GPS drift cannot cause a departure — reset any pending exit.
+      if (lastLocation !== 'Roaming' && typeof vel === 'number' && vel === 0) {
+        pendingLocation = null;
+        pendingCount = 0;
+        pendingStartTime = null;
+        return { changed: false, location: lastLocation, previousLocation: lastLocation };
+      }
+
       const current = resolveLocation(lat, lon);
 
       if (current === lastLocation) {

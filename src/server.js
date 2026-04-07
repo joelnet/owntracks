@@ -78,7 +78,7 @@ export function createApp({ username, password, store, detector, discord, activi
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const result = detector.detect(entry.lat, entry.lon, entry.tst);
+      const result = detector.detect(entry.lat, entry.lon, entry.tst, entry.vel);
       if (result.changed) {
         log.location(`Location: ${result.location}`);
 
