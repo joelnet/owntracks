@@ -3,13 +3,15 @@ import fs from "node:fs";
 import path from "node:path";
 import { timingSafeEqual } from "node:crypto";
 import express from "express";
-import { appendEntry } from "./lib/store.js";
+import { createStore } from "./lib/store.js";
 import * as log from "./lib/logger.js";
 import { loadConfig } from "./lib/config.js";
 import { createPOIDetector } from "./lib/poi.js";
 import { createDiscordClient } from "./lib/discord.js";
 import { createActivityDetector } from "./lib/activity.js";
 import { createVisitDetector } from "./lib/visit.js";
+import { reverseGeocode as nominatimGeocode } from "./lib/geocode.js";
+import { openDatabase, initSchema } from "./lib/db.js";
 
 function safeEqual(a, b) {
   const ba = Buffer.from(a);
@@ -17,12 +19,13 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, dataDir, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy } = {}) {
+export function createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode } = {}) {
   const app = express();
+  let lastProcessedTst = null;
 
   app.use(express.json());
 
-  app.post("/pub", (req, res) => {
+  app.post("/pub", async (req, res) => {
     // Validate Basic Auth
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith("Basic ")) {
@@ -64,9 +67,20 @@ export function createApp({ username, password, dataDir, detector, discord, acti
 
     // Skip low-accuracy GPS readings before any detection
     if (maxAccuracy && typeof entry.acc === 'number' && entry.acc > maxAccuracy) {
-      appendEntry(entry, dataDir);
+      if (detector) detector.resetPending();
+      store.appendEntry(entry);
       log.info(`Entry saved (skipped detection, acc=${entry.acc}): user=${user} device=${device} type=${entry.type}`);
       return res.status(200).json([]);
+    }
+
+    // When the phone can't get a fresh GPS fix (e.g. indoors), OwnTracks
+    // re-sends the last known position with the same tst. Substitute server
+    // time so detectors see time progressing while the user is stationary.
+    let effectiveTst = entry.tst;
+    if (typeof entry.tst === 'number' && entry.tst === lastProcessedTst) {
+      effectiveTst = Math.floor(Date.now() / 1000);
+    } else if (typeof entry.tst === 'number') {
+      lastProcessedTst = entry.tst;
     }
 
     // POI detection
@@ -75,7 +89,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const result = detector.detect(entry.lat, entry.lon);
+      const result = detector.detect(entry.lat, entry.lon, effectiveTst, entry.vel);
       if (result.changed) {
         log.location(`Location: ${result.location}`);
 
@@ -95,7 +109,7 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const activityResult = activity.update(entry.lat, entry.lon, entry.tst, entry.vel);
+      const activityResult = activity.update(entry.lat, entry.lon, effectiveTst, entry.vel);
 
       if (activityResult.changed || activityResult.initialClassification || activityResult.gapTransition) {
         if (onActivityPersist) {
@@ -124,13 +138,34 @@ export function createApp({ username, password, dataDir, detector, discord, acti
       typeof entry.lat === "number" &&
       typeof entry.lon === "number"
     ) {
-      const poiResult = detector ? detector.getLocation() : 'Roaming';
+      const poiResult = detector ? detector.resolveLocation(entry.lat, entry.lon) : 'Roaming';
       const activityState = activity ? activity.getState() : 'UNKNOWN';
       const visitResult = visit.processPoint(
-        { lat: entry.lat, lon: entry.lon, tst: entry.tst },
+        { lat: entry.lat, lon: entry.lon, tst: effectiveTst },
         poiResult,
         activityState
       );
+
+      // Geocode and rename learned POI before persisting
+      let geocodedAddress = null;
+      if ((visitResult?.type === 'visit_started' || visitResult?.type === 'visit_ended') && reverseGeocode) {
+        geocodedAddress = await reverseGeocode(visitResult.centroid.lat, visitResult.centroid.lon);
+        if (geocodedAddress && visitResult.type === 'visit_started' && visitConfig?.learn_pois) {
+          visit.renameLearnedPoi(visitResult.centroid.lat, visitResult.centroid.lon, geocodedAddress);
+        }
+      }
+
+      // Sync newly learned POI to the POI detector so it's recognized immediately
+      if (visitResult?.type === 'visit_started' && visitConfig?.learn_pois && detector) {
+        const currentPois = visit.getLearnedPois();
+        const newPoi = currentPois.find(p =>
+          Math.abs(p.lat - visitResult.centroid.lat) < 0.001 &&
+          Math.abs(p.lon - visitResult.centroid.lon) < 0.001
+        );
+        if (newPoi) {
+          detector.addLocation(newPoi);
+        }
+      }
 
       if (onVisitPersist) {
         try {
@@ -142,15 +177,23 @@ export function createApp({ username, password, dataDir, detector, discord, acti
 
       if (visitResult && visitConfig?.discord_notifications && discord) {
         if (visitResult.type === 'visit_started') {
-          discord.notify(`POI Lookup at (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
+          if (geocodedAddress) {
+            discord.notify(`POI Lookup at ${geocodedAddress}`);
+          } else {
+            discord.notify(`POI Lookup failed for (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)})`);
+          }
         }
         if (visitResult.type === 'visit_ended') {
-          discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
+          if (geocodedAddress) {
+            discord.notify(`Left ${geocodedAddress} — ${visitResult.duration_minutes} min visit`);
+          } else {
+            discord.notify(`Left unknown location (${visitResult.centroid.lat.toFixed(4)}, ${visitResult.centroid.lon.toFixed(4)}) — ${visitResult.duration_minutes} min visit`);
+          }
         }
       }
     }
 
-    appendEntry(entry, dataDir);
+    store.appendEntry(entry);
     log.info(`Entry saved: user=${user} device=${device} type=${entry.type}`);
 
     return res.status(200).json([]);
@@ -164,6 +207,12 @@ const isDirectRun =
   process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 
 if (isDirectRun) {
+  process.on("uncaughtException", (err) => {
+    log.error(`Uncaught exception: ${err.message}`);
+  });
+  process.on("unhandledRejection", (err) => {
+    log.error(`Unhandled rejection: ${err?.message || err}`);
+  });
   const port = process.env.PORT || 3000;
   const username = process.env.OWNTRACKS_USERNAME;
   const password = process.env.OWNTRACKS_PASSWORD;
@@ -173,22 +222,22 @@ if (isDirectRun) {
     process.exit(1);
   }
 
+  // Open database
+  const db = openDatabase();
+  initSchema(db);
+  const store = createStore(db);
+
   // Load config and create POI detector
   const config = loadConfig(path.join(import.meta.dirname, "..", "config.yml"));
 
-  // Load learned POIs and merge into POI config before creating detector
+  // Load learned POIs from database and merge into POI config
   let learnedPois = [];
-  const learnedPoisPath = path.join(import.meta.dirname, '..', 'data', 'learned-pois.json');
   if (config.visit_detection?.enabled && config.visit_detection?.learn_pois) {
-    try {
-      learnedPois = JSON.parse(fs.readFileSync(learnedPoisPath, 'utf-8'));
-      for (const poi of learnedPois) {
-        config.poi.locations.push(poi);
-      }
-      log.info(`Loaded ${learnedPois.length} learned POIs`);
-    } catch {
-      log.info('No learned POIs to load');
+    learnedPois = db.prepare('SELECT * FROM learned_pois').all();
+    for (const poi of learnedPois) {
+      config.poi.locations.push(poi);
     }
+    log.info(`Loaded ${learnedPois.length} learned POIs`);
   }
 
   const detector = createPOIDetector(config);
@@ -210,26 +259,15 @@ if (isDirectRun) {
   }
 
   // Re-check last GPS coordinates against current POI config
-  // This handles new POIs added since last transition, or config changes
   let seededFromGps = false;
-  try {
-    const dataDir = path.join(import.meta.dirname, "..", "data");
-    const files = fs.readdirSync(dataDir).filter(f => f.endsWith(".jsonl")).sort();
-    if (files.length > 0) {
-      const lastFile = fs.readFileSync(path.join(dataDir, files[files.length - 1]), "utf-8");
-      const lines = lastFile.trim().split("\n");
-      for (let i = lines.length - 1; i >= 0; i--) {
-        const entry = JSON.parse(lines[i]);
-        if (typeof entry.lat === "number" && typeof entry.lon === "number") {
-          lastLocation = detector.resolveLocation(entry.lat, entry.lon);
-          detector.setLocation(lastLocation);
-          seededFromGps = true;
-          break;
-        }
-      }
-    }
-  } catch {
-    // Fall back to location log value
+  const lastEntry = db.prepare(
+    'SELECT data FROM location_entries WHERE lat IS NOT NULL AND lon IS NOT NULL ORDER BY tst DESC LIMIT 1'
+  ).get();
+  if (lastEntry) {
+    const entry = JSON.parse(lastEntry.data);
+    lastLocation = detector.resolveLocation(entry.lat, entry.lon);
+    detector.setLocation(lastLocation);
+    seededFromGps = true;
   }
   if (!seededFromGps) {
     detector.setLocation(lastLocation);
@@ -244,8 +282,7 @@ if (isDirectRun) {
   const discordGuildId = process.env.DISCORD_GUILD_ID;
 
   if (discordToken && discordChannelId && discordGuildId) {
-    const dataDir = path.join(import.meta.dirname, '..', 'data');
-    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, dataDir });
+    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, db });
     discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
 
@@ -253,24 +290,24 @@ if (isDirectRun) {
   let activity;
   let activityConfig;
   let onActivityPersist;
+  const saveState = db.prepare('INSERT OR REPLACE INTO app_state (key, value, updated_at) VALUES (?, ?, ?)');
+
   if (config.activity?.enabled) {
     activityConfig = config.activity;
     activity = createActivityDetector(activityConfig);
 
     // Restore persisted state
-    const activityStatePath = path.join(import.meta.dirname, "..", "data", "activity-state.json");
-    try {
-      const saved = JSON.parse(fs.readFileSync(activityStatePath, "utf-8"));
+    const savedRow = db.prepare('SELECT value FROM app_state WHERE key = ?').get('activity_state');
+    if (savedRow) {
+      const saved = JSON.parse(savedRow.value);
       activity.setState(saved);
       log.info(`Activity state restored: ${saved.currentState}`);
-    } catch {
+    } else {
       log.info("No activity state to restore — starting fresh");
     }
 
     onActivityPersist = (state) => {
-      const dir = path.join(import.meta.dirname, "..", "data");
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "activity-state.json"), JSON.stringify(state), "utf-8");
+      saveState.run('activity_state', JSON.stringify(state), new Date().toISOString());
     };
   }
 
@@ -281,28 +318,49 @@ if (isDirectRun) {
   if (config.visit_detection?.enabled) {
     visitConfig = config.visit_detection;
 
-    const visitStatePath = path.join(import.meta.dirname, '..', 'data', 'visit-session.json');
+    const savedRow = db.prepare('SELECT value FROM app_state WHERE key = ?').get('visit_session');
     let savedVisitState = null;
-    try {
-      savedVisitState = JSON.parse(fs.readFileSync(visitStatePath, 'utf-8'));
+    if (savedRow) {
+      savedVisitState = JSON.parse(savedRow.value);
       log.info(`Visit session restored: active=${savedVisitState.active}`);
-    } catch {
+    } else {
       log.info('No visit session to restore');
     }
 
     visit = createVisitDetector(visitConfig, savedVisitState);
     visit.loadLearnedPois(learnedPois);
 
+    const upsertPoi = db.prepare(`
+      INSERT OR REPLACE INTO learned_pois (id, name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)
+      VALUES (@id, @name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at)
+    `);
+    const deletePois = db.prepare('DELETE FROM learned_pois');
+    const insertPoi = db.prepare(`
+      INSERT INTO learned_pois (name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)
+      VALUES (@name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at)
+    `);
+    const syncPois = db.transaction((pois) => {
+      deletePois.run();
+      for (const poi of pois) {
+        insertPoi.run(poi);
+      }
+    });
+
     onVisitPersist = (state, pois) => {
-      const dir = path.join(import.meta.dirname, '..', 'data');
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, 'visit-session.json'), JSON.stringify(state), 'utf-8');
-      fs.writeFileSync(path.join(dir, 'learned-pois.json'), JSON.stringify(pois, null, 2), 'utf-8');
+      saveState.run('visit_session', JSON.stringify(state), new Date().toISOString());
+      syncPois(pois);
     };
   }
 
+  // Build geocode function if configured
+  let reverseGeocode;
+  if (config.geocode) {
+    const geocodeCacheRadiusM = config.geocode.cache_radius_m;
+    reverseGeocode = (lat, lon) => nominatimGeocode(lat, lon, { db, cacheRadiusM: geocodeCacheRadiusM });
+  }
+
   const maxAccuracy = config.max_accuracy_m;
-  const app = createApp({ username, password, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy });
+  const app = createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
@@ -310,6 +368,7 @@ if (isDirectRun) {
   process.once("SIGUSR2", () => {
     log.info("Server shutting down (nodemon restart)");
     if (discord) discord.destroy();
+    db.close();
     server.close(() => process.kill(process.pid, "SIGUSR2"));
   });
 }

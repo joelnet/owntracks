@@ -1,18 +1,23 @@
-import fs from 'node:fs';
-import path from 'node:path';
+export function createStore(db) {
+  const insertStmt = db.prepare(`
+    INSERT INTO location_entries (username, device, lat, lon, tst, acc, vel, type, received_at, data)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
 
-const DEFAULT_DATA_DIR = path.join(import.meta.dirname, '../../data');
-
-export function getDataDir() {
-  return DEFAULT_DATA_DIR;
-}
-
-export function appendEntry(entry, dataDir = DEFAULT_DATA_DIR) {
-  fs.mkdirSync(dataDir, { recursive: true });
-
-  const today = new Date().toISOString().slice(0, 10);
-  const filePath = path.join(dataDir, `${today}.jsonl`);
-  const line = JSON.stringify(entry) + '\n';
-
-  fs.appendFileSync(filePath, line, 'utf-8');
+  return {
+    appendEntry(entry) {
+      insertStmt.run(
+        entry.username ?? null,
+        entry.device ?? null,
+        entry.lat ?? null,
+        entry.lon ?? null,
+        entry.tst ?? null,
+        entry.acc ?? null,
+        entry.vel ?? null,
+        entry.type ?? 'unknown',
+        entry.received_at ?? new Date().toISOString(),
+        JSON.stringify(entry)
+      );
+    },
+  };
 }

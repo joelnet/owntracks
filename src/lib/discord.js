@@ -1,7 +1,7 @@
 import { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } from 'discord.js';
 import { generateReport } from './report.js';
 
-export function createDiscordClient({ token, channelId, guildId, detector, config, dataDir }) {
+export function createDiscordClient({ token, channelId, guildId, detector, config, db }) {
   const client = new Client({ intents: [GatewayIntentBits.Guilds] });
   let ready = false;
 
@@ -31,6 +31,10 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
     } catch (err) {
       console.error('Discord setup error:', err.message);
     }
+  });
+
+  client.on('error', (err) => {
+    console.error('Discord client error:', err.message);
   });
 
   client.on('interactionCreate', async (interaction) => {
@@ -63,14 +67,23 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
           return;
         }
 
-        if (!config || !dataDir) {
+        if (!config || !db) {
           await interaction.reply({ content: 'Report not available (server misconfigured).', ephemeral: true });
           return;
         }
 
         await interaction.deferReply();
 
-        const report = generateReport(date, config, dataDir, tz);
+        // Merge learned POIs from DB (same as npm run report)
+        const reportConfig = { ...config, poi: { ...config.poi, locations: [...config.poi.locations] } };
+        const learnedPois = db.prepare('SELECT * FROM learned_pois').all();
+        for (const poi of learnedPois) {
+          if (!reportConfig.poi.locations.some(l => l.lat === poi.lat && l.lon === poi.lon)) {
+            reportConfig.poi.locations.push(poi);
+          }
+        }
+
+        const report = await generateReport(date, reportConfig, db, tz);
 
         if (!report) {
           await interaction.editReply(`No location data found for ${date}`);

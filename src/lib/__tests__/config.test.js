@@ -288,3 +288,40 @@ visit_detection:
     assert.throws(() => loadConfig(filePath), { message: /learned_poi_radius_m.*positive/ });
   });
 });
+
+describe('geocode config', () => {
+  afterEach(() => {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('accepts valid config with geocode section', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+geocode:
+  cache_radius_m: 100
+`);
+    const config = loadConfig(filePath);
+    assert.equal(config.geocode.cache_radius_m, 100);
+  });
+
+  it('accepts config without geocode section', () => {
+    const filePath = writeConfig(VALID_POI_SECTION);
+    const config = loadConfig(filePath);
+    assert.equal(config.geocode, undefined);
+  });
+
+  it('throws when cache_radius_m is not a positive number', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+geocode:
+  cache_radius_m: 0
+`);
+    assert.throws(() => loadConfig(filePath), { message: /cache_radius_m.*positive/ });
+  });
+
+  it('throws when cache_radius_m is not a number', () => {
+    const filePath = writeConfig(VALID_POI_SECTION + `
+geocode:
+  cache_radius_m: "big"
+`);
+    assert.throws(() => loadConfig(filePath), { message: /cache_radius_m.*positive/ });
+  });
+});

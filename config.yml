@@ -5,6 +5,7 @@ poi:
   default_radius_m: 100
   min_transition_points: 3
   exit_extra_m: 25
+  min_transition_seconds: 300
   locations:
     - name: Home
       lat: 34.0170901
@@ -17,6 +18,9 @@ poi:
       lat: 33.6349701
       lon: -117.849966
       radius_m: 100
+    - name: Mom's House
+      lat: 33.7245
+      lon: -117.9759
 
 activity:
   enabled: true
@@ -39,3 +43,6 @@ visit_detection:
   discord_notifications: true
   learn_pois: true
   learned_poi_radius_m: 100
+
+geocode:
+  cache_radius_m: 100

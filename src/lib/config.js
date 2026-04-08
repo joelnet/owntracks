@@ -37,6 +37,10 @@ export function loadConfig(filePath) {
     throw new Error('poi.exit_extra_m must be a non-negative number');
   }
 
+  if (poi.min_transition_seconds !== undefined && (typeof poi.min_transition_seconds !== 'number' || poi.min_transition_seconds < 0)) {
+    throw new Error('poi.min_transition_seconds must be a non-negative number');
+  }
+
   if (!Array.isArray(poi.locations) || poi.locations.length === 0) {
     throw new Error('poi.locations must be a non-empty array');
   }
@@ -82,6 +86,11 @@ export function loadConfig(filePath) {
     if (typeof visit_detection.discord_notifications !== 'boolean') throw new Error('visit_detection.discord_notifications must be a boolean');
     if (typeof visit_detection.learn_pois !== 'boolean') throw new Error('visit_detection.learn_pois must be a boolean');
     if (typeof visit_detection.learned_poi_radius_m !== 'number' || visit_detection.learned_poi_radius_m <= 0) throw new Error('visit_detection.learned_poi_radius_m must be a positive number');
+  }
+
+  if (config.geocode !== undefined) {
+    const { geocode } = config;
+    if (typeof geocode.cache_radius_m !== 'number' || geocode.cache_radius_m <= 0) throw new Error('geocode.cache_radius_m must be a positive number');
   }
 
   return config;

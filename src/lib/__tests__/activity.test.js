@@ -486,6 +486,42 @@ describe('activity detector', () => {
       assert.equal(detector.getState(), 'STATIONARY');
     });
 
+    it('overrides vel=0 with displacement when GPS shows driving', () => {
+      // Production scenario: phone reports vel=0 on every point but GPS coordinates
+      // show clear driving movement (~55 km/h). Reverse displacement check should
+      // keep state as DRIVING instead of falling to STATIONARY.
+      const config = {
+        ...BASE_CONFIG, window_size: 5,
+        dwell_threshold_minutes: 5, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+
+      // Establish DRIVING
+      const drivingPts = makeContinuousPoints([{ count: 6, speedKmh: 50 }]);
+      for (const p of drivingPts) {
+        detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      }
+      assert.equal(detector.getState(), 'DRIVING');
+
+      // Phone starts reporting vel=0 but GPS positions keep moving at ~50 km/h
+      const last = drivingPts[drivingPts.length - 1];
+      const speedMs = 50 / 3.6;
+      const degreesPerMeter = 1 / 111195;
+      const velZeroPoints = [];
+      for (let i = 1; i <= 8; i++) {
+        velZeroPoints.push({
+          lat: last.lat + (speedMs * i * 30) * degreesPerMeter,
+          lon: 0,
+          ts: last.timestamp + i * 30,
+        });
+      }
+      for (const p of velZeroPoints) {
+        detector.update(p.lat, p.lon, p.ts, 0); // vel=0 but clearly moving
+      }
+      // Should remain DRIVING — displacement proves real movement
+      assert.equal(detector.getState(), 'DRIVING');
+    });
+
     it('prevents false WALKING from GPS drift when phone reports low vel', () => {
       // Production scenario: at home, GPS drifts 10-25m per update, but vel=0-2
       const config = { ...BASE_CONFIG, walking_max_kmh: 3, dwell_threshold_minutes: 0.5, min_point_interval_seconds: 5 };
