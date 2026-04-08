@@ -35,6 +35,7 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
 
   client.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
+    if (config?.discord?.command_channel_id && interaction.channelId !== config.discord.command_channel_id) return;
 
     if (interaction.commandName === 'location') {
       try {

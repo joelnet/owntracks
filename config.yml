@@ -28,6 +28,9 @@ activity:
   min_transition_seconds: 120
   min_point_interval_seconds: 5
 
+discord:
+  command_channel_id: "540397251466362920"
+
 visit_detection:
   enabled: true
   containment_radius_m: 200

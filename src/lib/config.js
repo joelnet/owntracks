@@ -68,6 +68,11 @@ export function loadConfig(filePath) {
     if (activity.min_transition_seconds !== undefined && (typeof activity.min_transition_seconds !== 'number' || activity.min_transition_seconds < 0)) throw new Error('activity.min_transition_seconds must be a non-negative number');
   }
 
+  if (config.discord !== undefined) {
+    const { discord } = config;
+    if (typeof discord.command_channel_id !== 'string') throw new Error('discord.command_channel_id must be a string');
+  }
+
   if (config.visit_detection !== undefined) {
     const { visit_detection } = config;
     if (typeof visit_detection.enabled !== 'boolean') throw new Error('visit_detection.enabled must be a boolean');
