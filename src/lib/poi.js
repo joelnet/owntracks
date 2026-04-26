@@ -40,12 +40,20 @@ export function createPOIDetector(config) {
   return {
     detect(lat, lon, tst, vel) {
       // If at a known POI and phone confirms stationary (vel=0),
+      // AND GPS still shows within the POI's exit radius,
       // GPS drift cannot cause a departure — reset any pending exit.
       if (lastLocation !== 'Roaming' && typeof vel === 'number' && vel === 0) {
-        pendingLocation = null;
-        pendingCount = 0;
-        pendingStartTime = null;
-        return { changed: false, location: lastLocation, previousLocation: lastLocation };
+        const currentPoi = locations.find(p => p.name === lastLocation);
+        if (currentPoi) {
+          const exitRadius = (currentPoi.radius_m ?? default_radius_m) + exit_extra_m;
+          const dist = haversineDistance(lat, lon, currentPoi.lat, currentPoi.lon);
+          if (dist <= exitRadius) {
+            pendingLocation = null;
+            pendingCount = 0;
+            pendingStartTime = null;
+            return { changed: false, location: lastLocation, previousLocation: lastLocation };
+          }
+        }
       }
 
       const current = resolveLocation(lat, lon);

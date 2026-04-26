@@ -277,25 +277,34 @@ describe('POI resetPending', () => {
 });
 
 describe('POI vel=0 exit prevention', () => {
-  function makeDebounceConfig(locations, points, defaultRadius = 100) {
+  function makeDebounceConfig(locations, points, defaultRadius = 100, exitExtra = 0) {
     return {
-      poi: { default_radius_m: defaultRadius, min_transition_points: points, locations },
+      poi: { default_radius_m: defaultRadius, min_transition_points: points, exit_extra_m: exitExtra, locations },
     };
   }
 
-  it('vel=0 at a known POI resets pending exit and keeps location', () => {
+  it('vel=0 within exit radius resets pending exit and keeps location', () => {
     const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
     detector.setLocation('Home');
-    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending 1
-    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending 2
-    // Phone confirms stationary — should reset pending exit
-    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060, 0);
+    // NEAR_HOME is ~23m from Home — well within exit radius (100m)
+    // Use a point outside entry but within exit for the pending accumulation
+    detector.detect(JUST_OUTSIDE.lat, JUST_OUTSIDE.lon, 1000); // pending 1
+    // vel=0 while still within exit radius should suppress departure
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 0);
     assert.equal(r.changed, false);
     assert.equal(r.location, 'Home');
-    // Next point without vel=0 starts fresh (pending 1, not 3)
-    const r2 = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1090);
-    assert.equal(r2.changed, false);
-    assert.equal(r2.location, 'Home');
+  });
+
+  it('vel=0 far outside POI does NOT prevent departure detection', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    // FAR_AWAY is ~490m from Home — well outside exit radius
+    // vel=0 should be ignored when GPS clearly shows user has left
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000, 0); // pending 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030, 0); // pending 2
+    const r = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1060, 0); // pending 3 → fires
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
   });
 
   it('vel=0 does not block arrivals at a POI', () => {

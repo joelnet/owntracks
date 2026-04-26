@@ -67,7 +67,6 @@ export function createApp({ username, password, store, detector, discord, activi
 
     // Skip low-accuracy GPS readings before any detection
     if (maxAccuracy && typeof entry.acc === 'number' && entry.acc > maxAccuracy) {
-      if (detector) detector.resetPending();
       store.appendEntry(entry);
       log.info(`Entry saved (skipped detection, acc=${entry.acc}): user=${user} device=${device} type=${entry.type}`);
       return res.status(200).json([]);
