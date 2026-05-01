@@ -99,7 +99,7 @@ export async function generateReport(date, config, db, timezone) {
     poi.detect(e.lat, e.lon, tst);
     if (activity) activity.update(e.lat, e.lon, tst, e.vel);
     if (visit) {
-      const poiLoc = poi.resolveLocation(e.lat, e.lon);
+      const poiLoc = poi.getLocation();
       const actState = activity?.getState() ?? 'UNKNOWN';
       visit.processPoint({ lat: e.lat, lon: e.lon, tst }, poiLoc, actState);
     }
@@ -160,7 +160,7 @@ export async function generateReport(date, config, db, timezone) {
 
     // Visit detection
     if (visit) {
-      const poiLoc = poi.resolveLocation(e.lat, e.lon);
+      const poiLoc = poi.getLocation();
       const actState = activity?.getState() ?? 'UNKNOWN';
       const visitResult = visit.processPoint({ lat: e.lat, lon: e.lon, tst }, poiLoc, actState);
       if (visitResult) {

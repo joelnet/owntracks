@@ -745,6 +745,7 @@ describe('POST /pub', () => {
     };
     const detector = {
       detect: () => ({ changed: false, location: 'Roaming', previousLocation: 'Roaming' }),
+      getLocation: () => 'Roaming',
       resolveLocation: () => 'Roaming',
     };
     const { store } = createTestStore();
