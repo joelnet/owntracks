@@ -21,6 +21,14 @@ poi:
     - name: Mom's House
       lat: 33.7245
       lon: -117.9759
+    - name: SF Supermarket
+      lat: 34.0114724
+      lon: -117.8854873
+      radius_m: 50
+    - name: CVS
+      lat: 34.0105651
+      lon: -117.8862608
+      radius_m: 50
 
 activity:
   enabled: true
