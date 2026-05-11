@@ -80,14 +80,16 @@ The `activity` section is optional. Remove it to disable activity detection enti
 
 ```bash
 # Development (auto-restart on changes)
-npx nodemon server.js
+npm run dev
 
 # Production
-node server.js
+npm start
 
 # Run tests
 npm test
 ```
+
+For the Raspberry Pi deployment, run the app under systemd so it starts after reboot and restarts after crashes. See [docs/systemd.md](docs/systemd.md).
 
 ## Setup Guides
 

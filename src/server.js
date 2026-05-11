@@ -206,12 +206,6 @@ const isDirectRun =
   process.argv[1] && import.meta.url === `file://${process.argv[1]}`;
 
 if (isDirectRun) {
-  process.on("uncaughtException", (err) => {
-    log.error(`Uncaught exception: ${err.message}`);
-  });
-  process.on("unhandledRejection", (err) => {
-    log.error(`Unhandled rejection: ${err?.message || err}`);
-  });
   const port = process.env.PORT || 3000;
   const username = process.env.OWNTRACKS_USERNAME;
   const password = process.env.OWNTRACKS_PASSWORD;
@@ -364,10 +358,72 @@ if (isDirectRun) {
     log.info(`Server started on port ${port}`);
   });
 
+  let shuttingDown = false;
+
+  async function shutdown({ reason, exitCode = 0, nodemonRestart = false }) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+
+    log.info(`Server shutting down (${reason})`);
+
+    const forceCloseTimer = setTimeout(() => {
+      log.error("Graceful shutdown timed out; forcing remaining connections closed");
+      if (typeof server.closeAllConnections === "function") {
+        server.closeAllConnections();
+      }
+    }, 10000);
+    forceCloseTimer.unref();
+
+    try {
+      if (discord) {
+        await discord.destroy();
+      }
+
+      await new Promise((resolve) => {
+        server.close((err) => {
+          if (err) {
+            log.error(`HTTP server close failed: ${err.message}`);
+          }
+          resolve();
+        });
+      });
+
+      db.close();
+      clearTimeout(forceCloseTimer);
+      log.info("Server shutdown complete");
+    } catch (err) {
+      clearTimeout(forceCloseTimer);
+      log.error(`Shutdown failed: ${err?.stack || err?.message || err}`);
+      exitCode = exitCode || 1;
+    }
+
+    if (nodemonRestart) {
+      process.kill(process.pid, "SIGUSR2");
+      return;
+    }
+
+    process.exit(exitCode);
+  }
+
+  process.once("SIGTERM", () => {
+    shutdown({ reason: "SIGTERM" });
+  });
+
+  process.once("SIGINT", () => {
+    shutdown({ reason: "SIGINT" });
+  });
+
   process.once("SIGUSR2", () => {
-    log.info("Server shutting down (nodemon restart)");
-    if (discord) discord.destroy();
-    db.close();
-    server.close(() => process.kill(process.pid, "SIGUSR2"));
+    shutdown({ reason: "nodemon restart", nodemonRestart: true });
+  });
+
+  process.on("uncaughtException", (err) => {
+    log.error(`Uncaught exception: ${err?.stack || err?.message || err}`);
+    shutdown({ reason: "uncaught exception", exitCode: 1 });
+  });
+
+  process.on("unhandledRejection", (err) => {
+    log.error(`Unhandled rejection: ${err?.stack || err?.message || err}`);
+    shutdown({ reason: "unhandled rejection", exitCode: 1 });
   });
 }

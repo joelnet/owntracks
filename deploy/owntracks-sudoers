@@ -1,0 +1,2 @@
+joel ALL=(root) NOPASSWD: /usr/bin/systemctl start owntracks.service, /usr/bin/systemctl stop owntracks.service, /usr/bin/systemctl restart owntracks.service
+joel ALL=(root) NOPASSWD: /usr/bin/journalctl -u owntracks.service, /usr/bin/journalctl -u owntracks.service -f, /usr/bin/journalctl -u owntracks.service -n *, /usr/bin/journalctl -u owntracks.service --no-pager

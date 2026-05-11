@@ -1,0 +1,4 @@
+interface:
+  display_name: "OwnTracks Read Logs"
+  short_description: "Read recent OwnTracks service logs from journald."
+  default_prompt: "Show the recent OwnTracks service logs and summarize any problems."

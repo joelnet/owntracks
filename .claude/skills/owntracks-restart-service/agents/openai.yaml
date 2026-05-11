@@ -1,0 +1,4 @@
+interface:
+  display_name: "OwnTracks Restart Service"
+  short_description: "Restart the OwnTracks systemd service safely."
+  default_prompt: "Restart the OwnTracks service and report whether it is healthy."

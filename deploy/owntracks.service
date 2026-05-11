@@ -1,0 +1,21 @@
+[Unit]
+Description=OwnTracks Location Journal
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=joel
+Group=joel
+WorkingDirectory=/home/joel/dev/owntracks
+Environment=NODE_ENV=production
+Environment=PATH=/home/joel/.nvm/versions/node/v24.13.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/joel/.nvm/versions/node/v24.13.0/bin/node src/server.js
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+KillSignal=SIGTERM
+SyslogIdentifier=owntracks
+
+[Install]
+WantedBy=multi-user.target
