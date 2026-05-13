@@ -65,8 +65,13 @@ export function createApp({ username, password, store, detector, discord, activi
       received_at: new Date().toISOString(),
     };
 
-    // Skip low-accuracy GPS readings before any detection
+    // Skip low-accuracy GPS readings before any detection. Clear any
+    // half-accumulated POI transition so a noisy point can't count toward a
+    // false arrival/departure once we later see a clean fix.
     if (maxAccuracy && typeof entry.acc === 'number' && entry.acc > maxAccuracy) {
+      if (detector && typeof detector.resetPending === 'function') {
+        detector.resetPending();
+      }
       store.appendEntry(entry);
       log.info(`Entry saved (skipped detection, acc=${entry.acc}): user=${user} device=${device} type=${entry.type}`);
       return res.status(200).json([]);

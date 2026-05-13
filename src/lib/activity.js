@@ -8,7 +8,8 @@ function median(values) {
 
 export function createActivityDetector(config) {
   const { dwell_threshold_minutes, walking_max_kmh, driving_min_kmh, window_size,
-          min_transition_seconds = 0, min_point_interval_seconds = 0 } = config;
+          min_transition_seconds = 0, min_point_interval_seconds = 0,
+          stationary_max_spread_m = 300 } = config;
   let window = [];
   let currentState = 'UNKNOWN';
   let dwellStart = null;
@@ -39,6 +40,9 @@ export function createActivityDetector(config) {
     if (medianSpeed >= driving_min_kmh) { dwellStart = null; return 'DRIVING'; }
     if (currentState === 'DRIVING' && medianSpeed >= walking_max_kmh) { dwellStart = null; return 'DRIVING'; }
     if (medianSpeed >= walking_max_kmh) { dwellStart = null; return 'WALKING'; }
+    // Already stationary: low speed keeps us stationary. Dwell threshold
+    // gates *entering* STATIONARY, not maintaining it across data gaps.
+    if (currentState === 'STATIONARY') return 'STATIONARY';
     if (dwellStart === null) dwellStart = timestamp;
     if (timestamp - dwellStart >= dwell_threshold_minutes * 60) return 'STATIONARY';
     return 'WALKING';
@@ -78,6 +82,29 @@ export function createActivityDetector(config) {
       if (medianSpeed === null)
         return { changed: false, state: currentState, previousState: currentState, initialClassification: false, gapTransition };
 
+      const first = window[0], last = window[window.length - 1];
+      const windowTime = last.timestamp - first.timestamp;
+
+      // Bimodal-jitter guard: phones with weak GPS sometimes oscillate between
+      // a small set of cached fixes while stationary (e.g. indoors). Pairwise
+      // GPS speed across the window registers as movement even though the
+      // device is sitting still. When no point in the window has a reported
+      // velocity and the entire window fits within a small bounding box,
+      // override medianSpeed to 0 so the classifier sees the dwell.
+      if (windowTime > 0 && medianSpeed >= walking_max_kmh) {
+        const allVelMissing = window.every(p => typeof p.vel !== 'number' || p.vel < 0);
+        if (allVelMissing) {
+          let maxSpread = 0;
+          for (let i = 0; i < window.length - 1; i++) {
+            for (let j = i + 1; j < window.length; j++) {
+              const d = haversineDistance(window[i].lat, window[i].lon, window[j].lat, window[j].lon);
+              if (d > maxSpread) maxSpread = d;
+            }
+          }
+          if (maxSpread < stationary_max_spread_m) medianSpeed = 0;
+        }
+      }
+
       // Displacement sanity check: if window endpoints show the device hasn't
       // actually moved, high median speed is from GPS artifacts, not real driving.
       // Check displacement when median vel is low OR any point reports vel=0
@@ -85,8 +112,6 @@ export function createActivityDetector(config) {
       // position AND velocity spikes while some points still correctly report vel=0.
       // Legitimate driving (including U-turns) is preserved because all window
       // points have consistently high vel, so neither condition triggers.
-      const first = window[0], last = window[window.length - 1];
-      const windowTime = last.timestamp - first.timestamp;
       if (windowTime > 0 && medianSpeed >= driving_min_kmh) {
         const velValues = window.map(p =>
           typeof p.vel === 'number' && p.vel >= 0 ? p.vel : 0);
@@ -102,19 +127,21 @@ export function createActivityDetector(config) {
       // Reverse displacement check: if phone velocity reports slow/stationary
       // but GPS positions show significant movement, trust GPS displacement.
       // Catches vel=0 artifacts during driving and brief stops (stop signs,
-      // red lights) that shouldn't break a continuous drive.
-      // Skip when ALL window points report vel=0 — the phone is confident
-      // the device is stationary; large displacement is a GPS location jump.
+      // red lights) that shouldn't break a continuous drive. Require every
+      // adjacent pair to show motion before trusting — a one-off GPS spike
+      // produces large endpoint displacement but mostly-zero pair distances.
       if (windowTime > 0 && medianSpeed < walking_max_kmh) {
-        const velValues = window.map(p =>
-          typeof p.vel === 'number' && p.vel >= 0 ? p.vel : null);
-        const allZero = velValues.every(v => v === 0);
-        if (!allZero) {
-          const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
-          const displacementSpeed = (displacement / windowTime) * 3.6;
-          if (displacementSpeed >= driving_min_kmh) {
-            medianSpeed = displacementSpeed;
+        const displacement = haversineDistance(first.lat, first.lon, last.lat, last.lon);
+        const displacementSpeed = (displacement / windowTime) * 3.6;
+        if (displacementSpeed >= driving_min_kmh) {
+          let movingPairs = 0;
+          for (let i = 0; i < window.length - 1; i++) {
+            const dt = window[i + 1].timestamp - window[i].timestamp;
+            if (dt <= 0) continue;
+            const dist = haversineDistance(window[i].lat, window[i].lon, window[i + 1].lat, window[i + 1].lon);
+            if ((dist / dt) * 3.6 >= walking_max_kmh) movingPairs++;
           }
+          if (movingPairs === window.length - 1) medianSpeed = displacementSpeed;
         }
       }
 

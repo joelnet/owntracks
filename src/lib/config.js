@@ -70,6 +70,7 @@ export function loadConfig(filePath) {
     if (activity.walking_max_kmh >= activity.driving_min_kmh) throw new Error('activity.walking_max_kmh must be less than activity.driving_min_kmh');
     if (!Number.isInteger(activity.window_size) || activity.window_size < 3) throw new Error('activity.window_size must be an integer >= 3');
     if (activity.min_transition_seconds !== undefined && (typeof activity.min_transition_seconds !== 'number' || activity.min_transition_seconds < 0)) throw new Error('activity.min_transition_seconds must be a non-negative number');
+    if (activity.stationary_max_spread_m !== undefined && (typeof activity.stationary_max_spread_m !== 'number' || activity.stationary_max_spread_m <= 0)) throw new Error('activity.stationary_max_spread_m must be a positive number');
   }
 
   if (config.discord !== undefined) {

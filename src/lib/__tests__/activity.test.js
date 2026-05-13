@@ -539,6 +539,78 @@ describe('activity detector', () => {
     });
   });
 
+  describe('bimodal-jitter guard', () => {
+    it('treats bimodal cached fixes (no vel) within tight bbox as stationary', () => {
+      // Reproduces production pathology: phone re-emits two cached positions
+      // ~259m apart while stationary at home; vel is absent on every fix.
+      // Pairwise GPS speed registers as driving, but bounding box stays tight.
+      const config = {
+        ...BASE_CONFIG, window_size: 5, min_point_interval_seconds: 5,
+        dwell_threshold_minutes: 2, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+      const A = { lat: 34.01903, lon: -117.90103 };
+      const B = { lat: 34.01713, lon: -117.90265 };
+      // 12 points × 30s = 360s ≥ 2min dwell → guard keeps medianSpeed=0,
+      // classifier dwells into STATIONARY through the normal path.
+      let result;
+      for (let i = 0; i < 12; i++) {
+        const p = i % 2 === 0 ? A : B;
+        result = detector.update(p.lat, p.lon, 1000000 + i * 30, undefined);
+      }
+      assert.equal(result.state, 'STATIONARY');
+    });
+
+    it('does not suppress real walking when vel is reported', () => {
+      // Slow walk: vel=5 km/h sustained. Even if positions fall within the
+      // bbox threshold, the guard requires *all* vel to be missing.
+      const config = {
+        ...BASE_CONFIG, window_size: 5, min_point_interval_seconds: 5,
+        dwell_threshold_minutes: 5, min_transition_seconds: 0,
+      };
+      const detector = createActivityDetector(config);
+      const pts = makePoints(6, 5);
+      let result;
+      for (const p of pts) result = detector.update(p.lat, p.lon, p.timestamp, p.vel);
+      assert.notEqual(result.state, 'STATIONARY');
+    });
+
+    it('does not suppress driving when bbox exceeds threshold', () => {
+      // Highway driving with vel missing: bbox grows well past the spread
+      // threshold (60 km/h × 120s ≈ 2 km), so the guard leaves medianSpeed
+      // alone and DRIVING is preserved via the reverse-displacement check.
+      const config = {
+        ...BASE_CONFIG, window_size: 5, min_point_interval_seconds: 5,
+        dwell_threshold_minutes: 5, min_transition_seconds: 0,
+        stationary_max_spread_m: 300,
+      };
+      const detector = createActivityDetector(config);
+      const pts = makePoints(8, 60);
+      let result;
+      for (const p of pts) result = detector.update(p.lat, p.lon, p.timestamp, undefined);
+      assert.equal(result.state, 'DRIVING');
+    });
+
+    it('respects configured stationary_max_spread_m', () => {
+      // With a tight 100m threshold the 259m bounce no longer fits the bbox,
+      // so the guard does not fire and state does not reach STATIONARY.
+      const config = {
+        ...BASE_CONFIG, window_size: 5, min_point_interval_seconds: 5,
+        dwell_threshold_minutes: 5, min_transition_seconds: 0,
+        stationary_max_spread_m: 100,
+      };
+      const detector = createActivityDetector(config);
+      const A = { lat: 34.01903, lon: -117.90103 };
+      const B = { lat: 34.01713, lon: -117.90265 };
+      let result;
+      for (let i = 0; i < 12; i++) {
+        const p = i % 2 === 0 ? A : B;
+        result = detector.update(p.lat, p.lon, 1000000 + i * 30, undefined);
+      }
+      assert.notEqual(result.state, 'STATIONARY');
+    });
+  });
+
   describe('initial classification', () => {
     it('sets state from UNKNOWN and returns initialClassification:true exactly once', () => {
       const detector = createActivityDetector(BASE_CONFIG);
