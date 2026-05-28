@@ -33,6 +33,33 @@ function adjacentDate(dateStr, offset) {
   return d.toISOString().slice(0, 10);
 }
 
+function tzOffsetMs(date, tz) {
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+  });
+  const parts = Object.fromEntries(fmt.formatToParts(date).map(p => [p.type, p.value]));
+  const localAsUtc = Date.UTC(
+    parseInt(parts.year), parseInt(parts.month) - 1, parseInt(parts.day),
+    parseInt(parts.hour), parseInt(parts.minute), parseInt(parts.second),
+  );
+  return localAsUtc - date.getTime();
+}
+
+// Returns the UTC unix timestamp (seconds) corresponding to 00:00:00 local time
+// of `dateStr` in `tz`. Two-pass to handle DST: the offset at our first guess
+// may differ from the offset at true local midnight (e.g. on fall-back days).
+function localMidnightTst(dateStr, tz) {
+  const utcMidnight = new Date(dateStr + 'T00:00:00Z').getTime();
+  const firstOffset = tzOffsetMs(new Date(utcMidnight), tz);
+  let guess = utcMidnight - firstOffset;
+  const refinedOffset = tzOffsetMs(new Date(guess), tz);
+  if (refinedOffset !== firstOffset) {
+    guess = utcMidnight - refinedOffset;
+  }
+  return Math.floor(guess / 1000);
+}
+
 function createStaleTstTracker() {
   let lastTst = null;
   return function effectiveTst(entry) {
@@ -79,6 +106,18 @@ export async function generateReport(date, config, db, timezone) {
     return null;
   }
 
+  // Day boundaries anchor to local midnight, not the first/last GPS point. This
+  // matters because OwnTracks throttles updates while stationary — a phone idle
+  // at Home overnight may not send anything until morning, but the user was
+  // still Home for those hours.
+  const dayStartTst = localMidnightTst(date, tz);
+  const nextMidnightTst = localMidnightTst(adjacentDate(date, 1), tz);
+  const nowTst = Math.floor(Date.now() / 1000);
+  const lastEntryTst = dayEntries[dayEntries.length - 1].tst;
+  const dayEndTst = nowTst < nextMidnightTst
+    ? Math.max(nowTst, lastEntryTst) // today: end at "now" (clamp up to last entry if clock skew)
+    : nextMidnightTst - 1; // past day: 23:59:59 of the date
+
   // Process through detectors
   const poi = createPOIDetector(config);
   const activity = config.activity?.enabled
@@ -111,7 +150,7 @@ export async function generateReport(date, config, db, timezone) {
   const distanceByState = {};
 
   events.push({
-    tst: dayEntries[0].tst,
+    tst: dayStartTst,
     type: 'start',
     location: poi.getLocation(),
     activity: activity?.getState() ?? 'N/A',
@@ -178,7 +217,7 @@ export async function generateReport(date, config, db, timezone) {
   }
 
   events.push({
-    tst: dayEntries[dayEntries.length - 1].tst,
+    tst: dayEndTst,
     type: 'end',
     location: poi.getLocation(),
     activity: activity?.getState() ?? 'N/A',
@@ -247,7 +286,7 @@ export async function generateReport(date, config, db, timezone) {
   const locationSpans = [];
   const startEvent = events.find(e => e.type === 'start');
   let currentLoc = startEvent.location;
-  let spanStart = dayEntries[0].tst;
+  let spanStart = dayStartTst;
 
   for (const ev of events) {
     if (ev.type === 'poi') {
@@ -260,7 +299,7 @@ export async function generateReport(date, config, db, timezone) {
       spanStart = ev.tst;
     }
   }
-  locationSpans.push({ location: currentLoc, start: spanStart, end: dayEntries[dayEntries.length - 1].tst });
+  locationSpans.push({ location: currentLoc, start: spanStart, end: dayEndTst });
 
   const totals = {};
   for (const span of locationSpans) {
@@ -279,7 +318,7 @@ export async function generateReport(date, config, db, timezone) {
 
     const activitySpans = [];
     let currentAct = events[0].activity || events[0].state || 'UNKNOWN';
-    let actSpanStart = dayEntries[0].tst;
+    let actSpanStart = dayStartTst;
 
     for (const ev of events) {
       if (ev.type === 'activity') {
@@ -288,7 +327,7 @@ export async function generateReport(date, config, db, timezone) {
         actSpanStart = ev.tst;
       }
     }
-    activitySpans.push({ state: currentAct, start: actSpanStart, end: dayEntries[dayEntries.length - 1].tst });
+    activitySpans.push({ state: currentAct, start: actSpanStart, end: dayEndTst });
 
     const actTotals = {};
     for (const span of activitySpans) {

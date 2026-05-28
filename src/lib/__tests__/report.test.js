@@ -80,6 +80,43 @@ describe('generateReport', () => {
     assert.ok(report.includes('Data points: 1'));
   });
 
+  it('anchors day start to local midnight when first GPS point arrives mid-day', async () => {
+    // Simulate user stationary at Home overnight — phone sends no updates until
+    // midday. Day should still start at 12:00 AM at Home (seeded from prior day).
+    const prevDay = Math.floor(new Date('2026-03-19T22:00:00Z').getTime() / 1000);
+    const midDay = Math.floor(new Date('2026-03-20T19:08:00Z').getTime() / 1000); // 12:08 PM PDT
+    const evening = Math.floor(new Date('2026-03-20T23:00:00Z').getTime() / 1000);
+
+    insertEntries(db, [
+      { type: 'location', lat: 34.017, lon: -117.903, tst: prevDay, acc: 10 },
+      { type: 'location', lat: 34.017, lon: -117.903, tst: midDay, acc: 10 },
+      { type: 'location', lat: 34.017, lon: -117.903, tst: evening, acc: 10 },
+    ]);
+
+    const report = await generateReport('2026-03-20', baseConfig, db, 'America/Los_Angeles');
+    assert.ok(report);
+    assert.match(report, /12:00 AM\s+┌ Day starts — Home/);
+    assert.match(report, /11:59 PM\s+└ Day ends — Home/);
+    // Home should cover ~24h (allow for DST/rounding); definitely > 23h
+    const homeMatch = report.match(/Home\s+(\d+)h/);
+    assert.ok(homeMatch, 'Home duration should appear in summary');
+    assert.ok(parseInt(homeMatch[1]) >= 23, `expected Home >= 23h, got ${homeMatch[1]}h`);
+  });
+
+  it('caps day end at "now" for today (not midnight of tomorrow)', async () => {
+    const today = new Date().toLocaleDateString('en-CA', { timeZone: 'UTC' });
+    const t0 = Math.floor(Date.parse(today + 'T00:30:00Z') / 1000);
+
+    insertEntries(db, [
+      { type: 'location', lat: 34.017, lon: -117.903, tst: t0, acc: 10 },
+    ]);
+
+    const report = await generateReport(today, baseConfig, db, 'UTC');
+    assert.ok(report);
+    // For today, Day ends should not be 11:59 PM (we're not at end of day yet)
+    assert.doesNotMatch(report, /11:59 PM\s+└ Day ends/);
+  });
+
   it('includes activity summary when activity is enabled', async () => {
     const configWithActivity = {
       ...baseConfig,
