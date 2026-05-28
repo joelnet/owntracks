@@ -112,6 +112,19 @@ export function createPOIDetector(config) {
       pendingStartTime = null;
     },
 
+    forceResolve(lat, lon) {
+      const current = resolveLocation(lat, lon);
+      pendingLocation = null;
+      pendingCount = 0;
+      pendingStartTime = null;
+      if (current === lastLocation) {
+        return { changed: false, location: lastLocation, previousLocation: lastLocation };
+      }
+      const previousLocation = lastLocation;
+      lastLocation = current;
+      return { changed: true, location: current, previousLocation };
+    },
+
     addLocation(poi) {
       locations.push(poi);
     },

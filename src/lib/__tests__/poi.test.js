@@ -276,6 +276,45 @@ describe('POI resetPending', () => {
   });
 });
 
+describe('POI forceResolve', () => {
+  function makeDebounceConfig(locations, points, defaultRadius = 100) {
+    return {
+      poi: { default_radius_m: defaultRadius, min_transition_points: points, min_transition_seconds: 300, locations },
+    };
+  }
+
+  it('immediately commits Home → Roaming without waiting for dwell', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    const r = detector.forceResolve(FAR_AWAY.lat, FAR_AWAY.lon);
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Roaming');
+    assert.equal(r.previousLocation, 'Home');
+    assert.equal(detector.getLocation(), 'Roaming');
+  });
+
+  it('returns changed=false when GPS still resolves to current location', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    const r = detector.forceResolve(NEAR_HOME.lat, NEAR_HOME.lon);
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+    assert.equal(detector.getLocation(), 'Home');
+  });
+
+  it('clears any accumulated pending state after firing', () => {
+    const detector = createPOIDetector(makeDebounceConfig([HOME], 3));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000); // pending Roaming, count 1
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030); // pending Roaming, count 2
+    detector.forceResolve(FAR_AWAY.lat, FAR_AWAY.lon); // commits Roaming, clears pending
+    // A subsequent noisy point back inside Home starts pending fresh, no immediate flip
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060);
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Roaming');
+  });
+});
+
 describe('POI vel=0 exit prevention', () => {
   function makeDebounceConfig(locations, points, defaultRadius = 100, exitExtra = 0) {
     return {

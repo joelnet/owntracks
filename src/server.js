@@ -133,6 +133,25 @@ export function createApp({ username, password, store, detector, discord, activi
         const stateName = activityResult.state.charAt(0) + activityResult.state.slice(1).toLowerCase();
         discord.notify(`Now ${stateName}`);
       }
+
+      // DRIVING is a strong departure signal — bypass POI dwell so "Left X"
+      // fires immediately instead of waiting for min_transition_seconds.
+      if (
+        (activityResult.changed || activityResult.initialClassification) &&
+        activityResult.state === 'DRIVING' &&
+        detector
+      ) {
+        const forceResult = detector.forceResolve(entry.lat, entry.lon);
+        if (forceResult.changed) {
+          log.location(`Location: ${forceResult.location}`);
+          if (discord) {
+            const message = forceResult.location === 'Roaming'
+              ? `Left ${forceResult.previousLocation} (now Roaming)`
+              : `Arrived at ${forceResult.location}`;
+            discord.notify(message);
+          }
+        }
+      }
     }
 
     // Visit detection
