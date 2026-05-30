@@ -118,6 +118,18 @@ Uses median speed across the window with debounce (2 consecutive agreeing points
 
 Sends notifications to a Discord channel and provides a `/location` slash command. Requires a Discord bot with `bot` and `applications.commands` OAuth2 scopes and `Send Messages` permission.
 
+#### Correcting a location by replying
+
+Reverse-geocoded POIs are named after their nearest address, which can be wrong (e.g. `Arrived at Del Taco, 2401, South Azusa Avenue, …` when you were actually next door). To fix it, **reply** to that Discord notification with the correct name:
+
+> **Bot:** Arrived at Del Taco, 2401, South Azusa Avenue, West Covina
+> **You:** *(reply)* Pho Vietnam Kitchen
+> **Bot:** ✅ Renamed to **Pho Vietnam Kitchen**
+
+The rename updates the learned POI in the database and both detectors, so future arrivals and reports use the corrected name. This works for any notification that names a learned place (`Arrived at …`, `POI Lookup at …`, `Left … — N min visit`, `Left … (now Roaming)`). Fixed POIs from `config.yml` (Home, Work, …) are left untouched.
+
+Reading replies requires the **Message Content Intent**, a privileged intent: enable it under your bot's settings in the [Discord Developer Portal](https://discord.com/developers/applications) (Bot → Privileged Gateway Intents → Message Content Intent).
+
 ## Project Structure
 
 ```

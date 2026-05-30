@@ -473,3 +473,27 @@ describe('POI min_transition_seconds', () => {
     assert.equal(r.location, 'Roaming');
   });
 });
+
+describe('renameLocation', () => {
+  it('renames a matching location and reports success', () => {
+    const poi = { name: 'Del Taco, 2401', address: 'Del Taco, 2401', lat: 34.03, lon: -117.91 };
+    const detector = createPOIDetector(makeConfig([poi]));
+    const found = detector.renameLocation('Del Taco, 2401', 'Pho Vietnam Kitchen');
+    assert.equal(found, true);
+    assert.equal(poi.name, 'Pho Vietnam Kitchen');
+    assert.equal(poi.address, 'Pho Vietnam Kitchen');
+  });
+
+  it('updates the current location label when it matches', () => {
+    const poi = { name: 'Del Taco, 2401', address: 'Del Taco, 2401', lat: 34.03, lon: -117.91 };
+    const detector = createPOIDetector(makeConfig([poi]));
+    detector.setLocation('Del Taco, 2401');
+    detector.renameLocation('Del Taco, 2401', 'Pho Vietnam Kitchen');
+    assert.equal(detector.getLocation(), 'Pho Vietnam Kitchen');
+  });
+
+  it('returns false when no location matches', () => {
+    const detector = createPOIDetector(makeConfig([HOME]));
+    assert.equal(detector.renameLocation('Nonexistent', 'Whatever'), false);
+  });
+});

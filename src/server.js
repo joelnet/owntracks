@@ -296,17 +296,6 @@ if (isDirectRun) {
 
   log.location(`Last known location: ${lastLocation}`);
 
-  // Initialize Discord bot (optional)
-  let discord;
-  const discordToken = process.env.DISCORD_TOKEN;
-  const discordChannelId = process.env.DISCORD_CHANNEL_ID;
-  const discordGuildId = process.env.DISCORD_GUILD_ID;
-
-  if (discordToken && discordChannelId && discordGuildId) {
-    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, db });
-    discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
-  }
-
   // Initialize activity detector (optional)
   let activity;
   let activityConfig;
@@ -374,6 +363,18 @@ if (isDirectRun) {
       saveState.run('visit_session', JSON.stringify(state), new Date().toISOString());
       syncPois(pois);
     };
+  }
+
+  // Initialize Discord bot (optional). Created after the visit detector so
+  // reply-to-correct can rename learned POIs in the live detector.
+  let discord;
+  const discordToken = process.env.DISCORD_TOKEN;
+  const discordChannelId = process.env.DISCORD_CHANNEL_ID;
+  const discordGuildId = process.env.DISCORD_GUILD_ID;
+
+  if (discordToken && discordChannelId && discordGuildId) {
+    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, db, visit });
+    discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
 
   // Build geocode function if configured

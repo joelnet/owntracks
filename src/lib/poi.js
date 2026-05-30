@@ -149,5 +149,21 @@ export function createPOIDetector(config) {
     addLocation(poi) {
       locations.push(poi);
     },
+
+    // Rename a known location in place. Returns true if a match was found.
+    // Also updates the current location label so getLocation() reflects the
+    // new name without waiting for the next transition.
+    renameLocation(oldName, newName) {
+      let found = false;
+      for (const poi of locations) {
+        if (poi.name === oldName) {
+          poi.name = newName;
+          if (poi.address !== undefined) poi.address = newName;
+          found = true;
+        }
+      }
+      if (lastLocation === oldName) lastLocation = newName;
+      return found;
+    },
   };
 }

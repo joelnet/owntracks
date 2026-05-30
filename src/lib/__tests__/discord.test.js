@@ -24,3 +24,35 @@ describe('createDiscordClient', () => {
     discord.notify('test message');
   });
 });
+
+describe('parseLocationName', () => {
+  it('extracts the name from an "Arrived at" notification', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(
+      parseLocationName('Arrived at Del Taco, 2401, South Azusa Avenue, West Covina'),
+      'Del Taco, 2401, South Azusa Avenue, West Covina'
+    );
+  });
+
+  it('extracts the name from a "POI Lookup at" notification', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('POI Lookup at Some Place, 123 Main St'), 'Some Place, 123 Main St');
+  });
+
+  it('extracts the name from a "Left … — N min visit" notification', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('Left Some Place, 123 Main St — 42 min visit'), 'Some Place, 123 Main St');
+  });
+
+  it('extracts the name from a "Left … (now Roaming)" notification', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('Left Del Taco, 2401 (now Roaming)'), 'Del Taco, 2401');
+  });
+
+  it('returns null for non-location messages', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('Now Driving'), null);
+    assert.equal(parseLocationName('hello world'), null);
+    assert.equal(parseLocationName(undefined), null);
+  });
+});

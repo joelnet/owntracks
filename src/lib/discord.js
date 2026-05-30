@@ -1,9 +1,56 @@
 import { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } from 'discord.js';
 import { generateReport } from './report.js';
 
-export function createDiscordClient({ token, channelId, guildId, detector, config, db }) {
-  const client = new Client({ intents: [GatewayIntentBits.Guilds] });
+// Notification formats that carry a location name the user can correct by
+// replying. The captured group is the location name as it was announced.
+const LOCATION_MESSAGE_PATTERNS = [
+  /^Arrived at (.+)$/s,
+  /^POI Lookup at (.+)$/s,
+  /^Left (.+) — \d+ min visit$/s,
+  /^Left (.+) \(now Roaming\)$/s,
+];
+
+// Extract the announced location name from one of our own notifications, or
+// null if the message isn't a location notification we can act on.
+export function parseLocationName(content) {
+  if (typeof content !== 'string') return null;
+  for (const pattern of LOCATION_MESSAGE_PATTERNS) {
+    const match = content.match(pattern);
+    if (match) return match[1].trim();
+  }
+  return null;
+}
+
+export function createDiscordClient({ token, channelId, guildId, detector, config, db, visit }) {
+  const client = new Client({
+    intents: [
+      GatewayIntentBits.Guilds,
+      // GuildMessages + MessageContent let the bot read replies to its own
+      // notifications so a location name can be corrected inline. MessageContent
+      // is a privileged intent — enable it in the Discord Developer Portal.
+      GatewayIntentBits.GuildMessages,
+      GatewayIntentBits.MessageContent,
+    ],
+  });
   let ready = false;
+
+  // Rename a learned POI in the DB and both in-memory detectors. Configured
+  // POIs (Home, Work, …) aren't in learned_pois and are intentionally left
+  // alone. Returns { ok, reason }.
+  function renameLearnedLocation(oldName, newName) {
+    if (!db) return { ok: false, reason: 'unavailable' };
+    const row = db.prepare('SELECT * FROM learned_pois WHERE name = ?').get(oldName);
+    if (!row) return { ok: false, reason: 'not_found' };
+
+    db.prepare('UPDATE learned_pois SET name = ?, address = ? WHERE id = ?')
+      .run(newName, newName, row.id);
+    // Keep in-memory state consistent so the next persist (delete-all +
+    // reinsert from the visit detector) doesn't clobber the new name, and so
+    // arrivals announce the corrected name immediately.
+    if (visit?.renameLearnedPoi) visit.renameLearnedPoi(row.lat, row.lon, newName);
+    if (detector?.renameLocation) detector.renameLocation(oldName, newName);
+    return { ok: true };
+  }
 
   client.once('clientReady', async () => {
     try {
@@ -113,6 +160,42 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
         } catch { /* ignore follow-up errors */ }
       }
       return;
+    }
+  });
+
+  // Reply-to-correct: when the user replies to one of our location
+  // notifications, treat the reply text as the corrected name for that place.
+  client.on('messageCreate', async (message) => {
+    try {
+      if (message.author.bot) return;
+      if (!message.reference?.messageId) return;
+      // Only act in the channel we post notifications to.
+      if (message.channelId !== channelId) return;
+
+      let referenced;
+      try {
+        referenced = await message.channel.messages.fetch(message.reference.messageId);
+      } catch {
+        return;
+      }
+      if (!referenced || referenced.author.id !== client.user.id) return;
+
+      const oldName = parseLocationName(referenced.content);
+      if (!oldName) return;
+
+      const newName = message.content.trim();
+      if (!newName) return;
+
+      const result = renameLearnedLocation(oldName, newName);
+      if (result.ok) {
+        await message.reply(`✅ Renamed to **${newName}**`);
+      } else if (result.reason === 'not_found') {
+        await message.reply(`⚠️ Couldn't find a learned location matching that message — it may be a fixed POI from config.`);
+      } else {
+        await message.reply(`⚠️ Rename is unavailable right now.`);
+      }
+    } catch (err) {
+      console.error('Discord rename error:', err.message);
     }
   });
 
