@@ -1,4 +1,4 @@
-import { createPOIDetector, haversineDistance } from './poi.js';
+import { createPOIDetector, haversineDistance, poiAnchors } from './poi.js';
 import { createActivityDetector } from './activity.js';
 import { createVisitDetector } from './visit.js';
 import { reverseGeocode } from './geocode.js';
@@ -130,6 +130,11 @@ export async function generateReport(date, config, db, timezone) {
         exit_timeout_minutes: 3, learn_pois: true, learned_poi_radius_m: 100,
       })
     : null;
+  if (visit) {
+    visit.setKnownPois(
+      config.poi.locations.flatMap(p => poiAnchors(p, config.poi.default_radius_m))
+    );
+  }
 
   const effectiveTst = createStaleTstTracker();
 

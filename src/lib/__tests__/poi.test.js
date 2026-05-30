@@ -86,6 +86,23 @@ describe('createPOIDetector', () => {
     assert.equal(result.location, 'Home');
   });
 
+  it('multi-anchor POI matches points inside any anchor', () => {
+    const home = {
+      name: 'Home',
+      points: [
+        { lat: 34.0170901, lon: -117.9025897, radius_m: 100 },
+        { lat: 34.019098, lon: -117.901050, radius_m: 50 }, // phantom anchor ~265m away
+      ],
+    };
+    const detector = createPOIDetector(makeConfig([home]));
+    // Real home coord
+    assert.equal(detector.detect(34.0170901, -117.9025897).location, 'Home');
+    // Phantom anchor coord
+    assert.equal(detector.detect(34.019098, -117.901050).location, 'Home');
+    // Halfway between (outside both circles) — should be Roaming
+    assert.equal(detector.detect(34.0180940, -117.9018198).location, 'Roaming');
+  });
+
   it('per-POI radius_m override takes precedence over default_radius_m', () => {
     // Default radius 10m (too small to reach NEAR_HOME from HOME center)
     // But override with 200m on the POI

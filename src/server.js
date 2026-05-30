@@ -6,7 +6,7 @@ import express from "express";
 import { createStore } from "./lib/store.js";
 import * as log from "./lib/logger.js";
 import { loadConfig } from "./lib/config.js";
-import { createPOIDetector } from "./lib/poi.js";
+import { createPOIDetector, poiAnchors } from "./lib/poi.js";
 import { createDiscordClient } from "./lib/discord.js";
 import { createActivityDetector } from "./lib/activity.js";
 import { createVisitDetector } from "./lib/visit.js";
@@ -247,6 +247,10 @@ if (isDirectRun) {
   // Load config and create POI detector
   const config = loadConfig(path.join(import.meta.dirname, "..", "config.yml"));
 
+  // Snapshot configured POIs before merging learned ones — the visit detector
+  // uses this list as exclusion zones when deciding whether to learn a new POI.
+  const configuredPois = config.poi.locations.map(p => ({ ...p }));
+
   // Load learned POIs from database and merge into POI config
   let learnedPois = [];
   if (config.visit_detection?.enabled && config.visit_detection?.learn_pois) {
@@ -346,6 +350,9 @@ if (isDirectRun) {
 
     visit = createVisitDetector(visitConfig, savedVisitState);
     visit.loadLearnedPois(learnedPois);
+    visit.setKnownPois(
+      [...configuredPois, ...learnedPois].flatMap(p => poiAnchors(p, config.poi.default_radius_m))
+    );
 
     const upsertPoi = db.prepare(`
       INSERT OR REPLACE INTO learned_pois (id, name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)

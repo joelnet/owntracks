@@ -118,6 +118,49 @@ poi:
     const config = loadConfig(filePath);
     assert.equal(config.poi.locations[0].radius_m, 200);
   });
+
+  it('accepts a POI with multiple anchor points', () => {
+    const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  locations:
+    - name: Home
+      points:
+        - lat: 34.0170901
+          lon: -117.9025897
+          radius_m: 100
+        - lat: 34.019098
+          lon: -117.901050
+          radius_m: 50
+`);
+    const config = loadConfig(filePath);
+    assert.equal(config.poi.locations[0].points.length, 2);
+    assert.equal(config.poi.locations[0].points[1].radius_m, 50);
+  });
+
+  it('throws when points array is empty', () => {
+    const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  locations:
+    - name: Home
+      points: []
+`);
+    assert.throws(() => loadConfig(filePath), { message: /points.*non-empty/ });
+  });
+
+  it('throws when a point has invalid lat', () => {
+    const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  locations:
+    - name: Home
+      points:
+        - lat: 999
+          lon: -117.9
+`);
+    assert.throws(() => loadConfig(filePath), { message: /point lat/ });
+  });
 });
 
 describe('activity config', () => {

@@ -8,9 +8,15 @@ poi:
   min_transition_seconds: 300
   locations:
     - name: Home
-      lat: 34.0170901
-      lon: -117.9025897
-      radius_m: 100
+      points:
+        - lat: 34.0170901
+          lon: -117.9025897
+          radius_m: 100
+        # Secondary anchor for a recurring phone network-fallback coordinate
+        # (~265m NE of the real home) that would otherwise misclassify as Roaming.
+        - lat: 34.019098
+          lon: -117.901050
+          radius_m: 50
     - name: Target
       lat: 34.0297163
       lon: -117.9190439
@@ -51,6 +57,7 @@ visit_detection:
   discord_notifications: true
   learn_pois: true
   learned_poi_radius_m: 100
+  min_distance_from_known_poi_m: 200
 
 geocode:
   cache_radius_m: 100

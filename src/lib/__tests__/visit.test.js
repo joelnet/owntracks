@@ -303,6 +303,46 @@ describe('createVisitDetector — learned POIs', () => {
     original[0].name = 'Mutated';
     assert.equal(v.getLearnedPois()[0].name, 'Place');
   });
+
+  it('rejects learned POI within min_distance_from_known_poi_m of a known POI', () => {
+    // Known POI radius 100m + guard 200m = 300m exclusion. Anchor is ~259m from the known POI.
+    const v = createVisitDetector(makeConfig({ learn_pois: true, min_distance_from_known_poi_m: 200 }));
+    v.setKnownPois([{ name: 'Home', lat: 34.0170901, lon: -117.9025897, radius_m: 100 }]);
+    const phantom = { lat: 34.019032, lon: -117.9010321 };
+    v.processPoint(makePoint(phantom.lat, phantom.lon, BASE_TST), 'Roaming', 'STATIONARY');
+    v.processPoint(makePoint(phantom.lat, phantom.lon, BASE_TST + 301), 'Roaming', 'STATIONARY');
+    assert.equal(v.getLearnedPois().length, 0);
+  });
+
+  it('learns POI farther than the guard distance from any known POI', () => {
+    const v = createVisitDetector(makeConfig({ learn_pois: true, min_distance_from_known_poi_m: 200 }));
+    v.setKnownPois([{ name: 'Home', lat: 34.0170901, lon: -117.9025897, radius_m: 100 }]);
+    // ~1.5km from Home — well outside the 300m guard.
+    v.processPoint(makePoint(34.0300, -117.9150, BASE_TST), 'Roaming', 'STATIONARY');
+    v.processPoint(makePoint(34.0300, -117.9150, BASE_TST + 301), 'Roaming', 'STATIONARY');
+    assert.equal(v.getLearnedPois().length, 1);
+  });
+
+  it('suppresses visit_started/visit_ended when centroid is inside a known POI exclusion zone', () => {
+    const v = createVisitDetector(makeConfig({ learn_pois: true, min_distance_from_known_poi_m: 200 }));
+    v.setKnownPois([{ name: 'Home', lat: 34.0170901, lon: -117.9025897, radius_m: 100 }]);
+    const phantom = { lat: 34.019032, lon: -117.9010321 }; // ~259m from Home, inside 100+200=300m guard
+    const started = v.processPoint(makePoint(phantom.lat, phantom.lon, BASE_TST), 'Roaming', 'STATIONARY');
+    const triggered = v.processPoint(makePoint(phantom.lat, phantom.lon, BASE_TST + 301), 'Roaming', 'STATIONARY');
+    const ended = v.processPoint(makePoint(phantom.lat, phantom.lon, BASE_TST + 600), 'Home', 'STATIONARY');
+    assert.equal(started, null);
+    assert.equal(triggered, null, 'visit_started should be suppressed');
+    assert.equal(ended, null, 'visit_ended should also be suppressed');
+    assert.equal(v.getLearnedPois().length, 0);
+  });
+
+  it('guard disabled when min_distance_from_known_poi_m is 0', () => {
+    const v = createVisitDetector(makeConfig({ learn_pois: true, min_distance_from_known_poi_m: 0 }));
+    v.setKnownPois([{ name: 'Home', lat: ANCHOR.lat, lon: ANCHOR.lon, radius_m: 100 }]);
+    v.processPoint(makePoint(ANCHOR.lat, ANCHOR.lon, BASE_TST), 'Roaming', 'STATIONARY');
+    v.processPoint(makePoint(NEAR_ANCHOR.lat, NEAR_ANCHOR.lon, BASE_TST + 301), 'Roaming', 'STATIONARY');
+    assert.equal(v.getLearnedPois().length, 1);
+  });
 });
 
 // === Task 5: State persistence ===

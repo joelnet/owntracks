@@ -49,14 +49,31 @@ export function loadConfig(filePath) {
     if (typeof loc.name !== 'string') {
       throw new Error('Each location must have a name (string)');
     }
-    if (typeof loc.lat !== 'number' || loc.lat < -90 || loc.lat > 90) {
-      throw new Error(`Location "${loc.name}": lat must be a number between -90 and 90`);
-    }
-    if (typeof loc.lon !== 'number' || loc.lon < -180 || loc.lon > 180) {
-      throw new Error(`Location "${loc.name}": lon must be a number between -180 and 180`);
-    }
-    if (loc.radius_m !== undefined && (typeof loc.radius_m !== 'number' || loc.radius_m <= 0)) {
-      throw new Error(`Location "${loc.name}": radius_m must be a positive number`);
+    if (Array.isArray(loc.points)) {
+      if (loc.points.length === 0) {
+        throw new Error(`Location "${loc.name}": points must be a non-empty array`);
+      }
+      for (const p of loc.points) {
+        if (typeof p.lat !== 'number' || p.lat < -90 || p.lat > 90) {
+          throw new Error(`Location "${loc.name}": each point lat must be a number between -90 and 90`);
+        }
+        if (typeof p.lon !== 'number' || p.lon < -180 || p.lon > 180) {
+          throw new Error(`Location "${loc.name}": each point lon must be a number between -180 and 180`);
+        }
+        if (p.radius_m !== undefined && (typeof p.radius_m !== 'number' || p.radius_m <= 0)) {
+          throw new Error(`Location "${loc.name}": each point radius_m must be a positive number`);
+        }
+      }
+    } else {
+      if (typeof loc.lat !== 'number' || loc.lat < -90 || loc.lat > 90) {
+        throw new Error(`Location "${loc.name}": lat must be a number between -90 and 90`);
+      }
+      if (typeof loc.lon !== 'number' || loc.lon < -180 || loc.lon > 180) {
+        throw new Error(`Location "${loc.name}": lon must be a number between -180 and 180`);
+      }
+      if (loc.radius_m !== undefined && (typeof loc.radius_m !== 'number' || loc.radius_m <= 0)) {
+        throw new Error(`Location "${loc.name}": radius_m must be a positive number`);
+      }
     }
   }
 
@@ -87,6 +104,7 @@ export function loadConfig(filePath) {
     if (typeof visit_detection.discord_notifications !== 'boolean') throw new Error('visit_detection.discord_notifications must be a boolean');
     if (typeof visit_detection.learn_pois !== 'boolean') throw new Error('visit_detection.learn_pois must be a boolean');
     if (typeof visit_detection.learned_poi_radius_m !== 'number' || visit_detection.learned_poi_radius_m <= 0) throw new Error('visit_detection.learned_poi_radius_m must be a positive number');
+    if (visit_detection.min_distance_from_known_poi_m !== undefined && (typeof visit_detection.min_distance_from_known_poi_m !== 'number' || visit_detection.min_distance_from_known_poi_m < 0)) throw new Error('visit_detection.min_distance_from_known_poi_m must be a non-negative number');
   }
 
   if (config.geocode !== undefined) {

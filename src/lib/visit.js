@@ -7,10 +7,15 @@ export function createVisitDetector(config, savedState) {
     exit_timeout_minutes,
     learn_pois,
     learned_poi_radius_m,
+    min_distance_from_known_poi_m = 0,
   } = config;
 
   let session = null;
   let learnedPois = [];
+  // Known POIs (configured + previously learned) used as exclusion zones when
+  // learning new ones. Prevents phantom POIs from being learned at network-
+  // fallback coordinates that consistently appear near a real POI.
+  let knownPois = [];
 
   if (savedState && savedState.active) {
     session = {
@@ -20,6 +25,7 @@ export function createVisitDetector(config, savedState) {
       point_count: savedState.point_count,
       started_at: savedState.started_at,
       triggered: savedState.triggered,
+      suppressed: savedState.suppressed ?? false,
       last_outside_at: savedState.last_outside_at,
     };
   }
@@ -36,11 +42,19 @@ export function createVisitDetector(config, savedState) {
     };
   }
 
+  function isNearKnownPoi(lat, lon) {
+    if (min_distance_from_known_poi_m <= 0) return false;
+    return knownPois.some(p => {
+      const guard = (p.radius_m ?? 0) + min_distance_from_known_poi_m;
+      return haversineDistance(p.lat, p.lon, lat, lon) <= guard;
+    });
+  }
+
   function closeSession(tst) {
     if (!session) return null;
-    const wasTriggered = session.triggered;
+    const emit = session.triggered && !session.suppressed;
     let event = null;
-    if (wasTriggered) {
+    if (emit) {
       const startMs = new Date(session.started_at).getTime();
       const endMs = tst * 1000;
       const durationMin = Math.round((endMs - startMs) / 60000);
@@ -111,6 +125,13 @@ export function createVisitDetector(config, savedState) {
         const elapsedSec = (tst * 1000 - startMs) / 1000;
         if (elapsedSec >= min_dwell_minutes * 60) {
           session.triggered = true;
+          // Suppress visit when the centroid sits inside a known POI's exclusion
+          // zone — this is almost always a network-fallback / cached coordinate
+          // and not a real visit.
+          if (isNearKnownPoi(session.centroid.lat, session.centroid.lon)) {
+            session.suppressed = true;
+            return null;
+          }
           if (learn_pois) {
             learnPoi(session.centroid, tst);
           }
@@ -146,6 +167,7 @@ export function createVisitDetector(config, savedState) {
         point_count: session.point_count,
         started_at: session.started_at,
         triggered: session.triggered,
+        suppressed: session.suppressed ?? false,
         last_outside_at: session.last_outside_at,
       };
     },
@@ -154,6 +176,9 @@ export function createVisitDetector(config, savedState) {
     },
     loadLearnedPois(pois) {
       learnedPois = pois.map(p => ({ ...p }));
+    },
+    setKnownPois(pois) {
+      knownPois = pois.map(p => ({ ...p }));
     },
     renameLearnedPoi(lat, lon, name) {
       const poi = learnedPois.find(p =>
