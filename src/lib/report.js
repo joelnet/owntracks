@@ -174,6 +174,17 @@ export async function generateReport(date, config, db, timezone) {
     const actResult = activity?.update(e.lat, e.lon, tst, e.vel);
 
     if (poiResult.changed) {
+      // Direct POI→POI transitions (no Roaming gap) skip the "Left X" line
+      // because only the new location is logged. Synthesize a Left event for
+      // the previous POI so the user sees both halves of the transition.
+      if (poiResult.previousLocation !== 'Roaming' && poiResult.location !== 'Roaming') {
+        events.push({
+          tst,
+          type: 'poi',
+          location: 'Roaming',
+          previousLocation: poiResult.previousLocation,
+        });
+      }
       events.push({
         tst,
         type: 'poi',
