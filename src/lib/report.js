@@ -221,11 +221,28 @@ export async function generateReport(date, config, db, timezone) {
     prevPoint = { lat: e.lat, lon: e.lon };
   }
 
+  // For the day-end summary, prefer the geographic truth over the detector's
+  // latched state. The POI detector may still say "Roaming" if a re-entry to
+  // Home POI had only 2 valid points before SKIPs ate the rest; resolveLocation
+  // against the last GPS point reflects where the user actually was. Likewise
+  // project STATIONARY when no fresh point has arrived for longer than the
+  // activity dwell threshold — a gap-reset would have fired had any point
+  // come in to trigger the gap check.
+  const lastDayEntry = dayEntries[dayEntries.length - 1];
+  const endLocation = lastDayEntry
+    ? poi.resolveLocation(lastDayEntry.lat, lastDayEntry.lon)
+    : poi.getLocation();
+  const dwellThresholdSec = (config.activity?.dwell_threshold_minutes ?? 5) * 60;
+  const endActivity = activity
+    ? (lastDayEntry && (dayEndTst - lastDayEntry.tst) > dwellThresholdSec
+        ? 'STATIONARY'
+        : activity.getState())
+    : 'N/A';
   events.push({
     tst: dayEndTst,
     type: 'end',
-    location: poi.getLocation(),
-    activity: activity?.getState() ?? 'N/A',
+    location: endLocation,
+    activity: endActivity,
   });
 
   // Geocode visit events
