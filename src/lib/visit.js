@@ -16,6 +16,8 @@ export function createVisitDetector(config, savedState) {
   // learning new ones. Prevents phantom POIs from being learned at network-
   // fallback coordinates that consistently appear near a real POI.
   let knownPois = [];
+  // Previous processed point — used to detect "hidden stops" across data gaps.
+  let prevPoint = null;
 
   if (savedState && savedState.active) {
     session = {
@@ -99,17 +101,45 @@ export function createVisitDetector(config, savedState) {
 
     // Close conditions (checked before accumulation)
     if (session) {
-      if (poiResult !== 'Roaming') return closeSession(tst);
-      if (activityState === 'DRIVING') return closeSession(tst);
+      if (poiResult !== 'Roaming') {
+        const event = closeSession(tst);
+        prevPoint = { lat, lon, tst, poi: poiResult };
+        return event;
+      }
+      if (activityState === 'DRIVING') {
+        const event = closeSession(tst);
+        prevPoint = { lat, lon, tst, poi: poiResult };
+        return event;
+      }
+    }
+
+    // Hidden-stop detection: two consecutive Roaming points with a time gap
+    // longer than the dwell threshold but a position gap smaller than the
+    // containment radius indicate the user stopped during the gap (phone went
+    // dark indoors / parked). Anchor a session retroactively at the pre-gap
+    // point so dwell counts from the real stop start — otherwise the activity
+    // state lingers at DRIVING and the post-gap point becomes the departure.
+    if (!session && poiResult === 'Roaming' && prevPoint && prevPoint.poi === 'Roaming') {
+      const gapSec = tst - prevPoint.tst;
+      if (gapSec > min_dwell_minutes * 60) {
+        const gapDist = haversineDistance(lat, lon, prevPoint.lat, prevPoint.lon);
+        if (gapDist <= containment_radius_m) {
+          openSession(prevPoint.lat, prevPoint.lon, prevPoint.tst);
+        }
+      }
     }
 
     // Open condition
     if (!session && poiResult === 'Roaming' && activityState !== 'DRIVING') {
       openSession(lat, lon, tst);
+      prevPoint = { lat, lon, tst, poi: poiResult };
       return null;
     }
 
-    if (!session) return null;
+    if (!session) {
+      prevPoint = { lat, lon, tst, poi: poiResult };
+      return null;
+    }
 
     // During session: check containment
     const dist = haversineDistance(lat, lon, session.anchor.lat, session.anchor.lon);
@@ -149,10 +179,13 @@ export function createVisitDetector(config, savedState) {
       const outsideStartMs = new Date(session.last_outside_at).getTime();
       const outsideSec = (tst * 1000 - outsideStartMs) / 1000;
       if (outsideSec >= exit_timeout_minutes * 60) {
-        return closeSession(tst);
+        const event = closeSession(tst);
+        prevPoint = { lat, lon, tst, poi: poiResult };
+        return event;
       }
     }
 
+    prevPoint = { lat, lon, tst, poi: poiResult };
     return null;
   }
 
