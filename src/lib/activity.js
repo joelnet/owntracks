@@ -171,6 +171,35 @@ export function createActivityDetector(config) {
         currentState = pendingState;
         return { changed: true, state: currentState, previousState, initialClassification: false, gapTransition };
       }
+
+      // Early-fire path for vel-null windows leaving STATIONARY. When the phone
+      // reports no velocity, the standard pendingCount>=2 debounce exists to
+      // guard against single-point Doppler spikes — but those can't happen
+      // here. If every window point has vel=null and every adjacent pair shows
+      // sustained motion (>= walking_max_kmh) across coord-derived speed, the
+      // movement is well-confirmed and we fire on the first classification.
+      // Fixes the case where stale-tst duplicates spread by received_at create
+      // pseudo-gaps that reset the window before pendingCount can reach 2.
+      const isFromStationary = currentState === 'STATIONARY' &&
+                               (pendingState === 'DRIVING' || pendingState === 'WALKING');
+      if (pendingCount === 1 && isFromStationary && timeReqMet) {
+        const allVelMissing = window.every(p => typeof p.vel !== 'number' || p.vel < 0);
+        if (allVelMissing) {
+          let allAdjacentMoving = true;
+          for (let i = 0; i < window.length - 1; i++) {
+            const dt = window[i + 1].timestamp - window[i].timestamp;
+            if (dt <= 0) { allAdjacentMoving = false; break; }
+            const dist = haversineDistance(window[i].lat, window[i].lon, window[i + 1].lat, window[i + 1].lon);
+            if ((dist / dt) * 3.6 < walking_max_kmh) { allAdjacentMoving = false; break; }
+          }
+          if (allAdjacentMoving) {
+            const previousState = currentState;
+            currentState = pendingState;
+            return { changed: true, state: currentState, previousState, initialClassification: false, gapTransition };
+          }
+        }
+      }
+
       return { changed: false, state: currentState, previousState: currentState, initialClassification: false, gapTransition };
     },
     getState() { return currentState; },
