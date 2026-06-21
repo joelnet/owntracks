@@ -682,7 +682,10 @@ describe('POST /pub', () => {
     assert.equal(visitCalls.length, 0);
   });
 
-  it('resets POI pending state when point is filtered by accuracy', async () => {
+  it('does not reset POI pending state when point is filtered by accuracy', async () => {
+    // Skipped points never reach detect(), so they can't advance a pending
+    // transition. Resetting here would erase legitimate progress from prior
+    // clean points whenever SKIPs are interleaved with them.
     let resetCalled = false;
     const detector = {
       detect: () => ({ changed: false, location: 'Home', previousLocation: 'Home' }),
@@ -700,7 +703,7 @@ describe('POST /pub', () => {
       .post('/pub')
       .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
       .send({ _type: 'location', lat: 34.017, lon: -117.902, acc: 50, tst: 1711036800 });
-    assert.equal(resetCalled, true);
+    assert.equal(resetCalled, false);
   });
 
   it('does not reset POI pending state when point passes accuracy filter', async () => {
