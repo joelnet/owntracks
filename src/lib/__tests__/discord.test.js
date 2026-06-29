@@ -49,10 +49,35 @@ describe('parseLocationName', () => {
     assert.equal(parseLocationName('Left Del Taco, 2401 (now Roaming)'), 'Del Taco, 2401');
   });
 
+  it('extracts the name from a "Currently at X" /location response', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('Currently at Jersey Mike\'s'), 'Jersey Mike\'s');
+  });
+
   it('returns null for non-location messages', async () => {
     const { parseLocationName } = await import('../discord.js');
     assert.equal(parseLocationName('Now Driving'), null);
     assert.equal(parseLocationName('hello world'), null);
     assert.equal(parseLocationName(undefined), null);
+  });
+
+  it('does not treat "Currently Roaming" as a renameable name', async () => {
+    const { parseLocationName } = await import('../discord.js');
+    assert.equal(parseLocationName('Currently Roaming'), null);
+  });
+});
+
+describe('isRoamingLocationMessage', () => {
+  it('matches the /location Roaming response', async () => {
+    const { isRoamingLocationMessage, ROAMING_LOCATION_MESSAGE } = await import('../discord.js');
+    assert.equal(isRoamingLocationMessage('Currently Roaming'), true);
+    assert.equal(isRoamingLocationMessage(ROAMING_LOCATION_MESSAGE), true);
+  });
+
+  it('does not match other location messages', async () => {
+    const { isRoamingLocationMessage } = await import('../discord.js');
+    assert.equal(isRoamingLocationMessage('Currently at Home'), false);
+    assert.equal(isRoamingLocationMessage('Arrived at Target'), false);
+    assert.equal(isRoamingLocationMessage(undefined), false);
   });
 });
