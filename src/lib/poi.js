@@ -31,11 +31,22 @@ export function poiAnchors(poi, defaultRadius) {
 }
 
 export function createPOIDetector(config) {
-  const { default_radius_m, locations, min_transition_points = 1, exit_extra_m = 0, min_transition_seconds = 0 } = config.poi;
+  const {
+    default_radius_m,
+    locations,
+    min_transition_points = 1,
+    exit_extra_m = 0,
+    min_transition_seconds = 0,
+    immediate_arrival_stationary_points = 2,
+  } = config.poi;
   let lastLocation = 'Roaming';
   let pendingLocation = null;
   let pendingCount = 0;
   let pendingStartTime = null;
+  // Consecutive phone-confirmed stationary fixes (vel === 0) resolving to the
+  // current pending location. Resets whenever the pending location changes or a
+  // moving fix arrives.
+  let stationaryCount = 0;
 
   function poiContains(poi, lat, lon, extraBuffer = 0) {
     for (const a of poiAnchors(poi, default_radius_m)) {
@@ -73,6 +84,7 @@ export function createPOIDetector(config) {
           pendingLocation = null;
           pendingCount = 0;
           pendingStartTime = null;
+          stationaryCount = 0;
           return { changed: false, location: lastLocation, previousLocation: lastLocation };
         }
       }
@@ -83,6 +95,7 @@ export function createPOIDetector(config) {
         pendingLocation = null;
         pendingCount = 0;
         pendingStartTime = null;
+        stationaryCount = 0;
         return { changed: false, location: lastLocation, previousLocation: lastLocation };
       }
 
@@ -92,6 +105,37 @@ export function createPOIDetector(config) {
         pendingLocation = current;
         pendingCount = 1;
         pendingStartTime = tst ?? null;
+        stationaryCount = 0;
+      }
+
+      stationaryCount = (typeof vel === 'number' && vel === 0) ? stationaryCount + 1 : 0;
+
+      // Immediate arrival at a known location. The transition debounce
+      // (min_transition_points / min_transition_seconds) exists to reject
+      // drive-bys and GPS jitter near a POI edge. It has nothing to identify at
+      // a place that is already in the database, so once the phone confirms it
+      // is parked there, commit the arrival and skip the dwell entirely.
+      // Mirrors the DRIVING departure fast path in server.js.
+      //
+      // Arrival is confirmed by `immediate_arrival_stationary_points`
+      // consecutive stationary fixes (vel === 0) rather than one, because a
+      // single vel === 0 is not proof of arrival: phones report zero velocity at
+      // red lights and during Doppler dropouts mid-drive, and several learned
+      // POIs sit on roads. Requiring two costs one extra ping (~30s, versus the
+      // 5-minute dwell) and rejects those. A moving fix resets the run, so
+      // drive-bys still take the full debounce path.
+      if (
+        immediate_arrival_stationary_points > 0 &&
+        current !== 'Roaming' &&
+        stationaryCount >= immediate_arrival_stationary_points
+      ) {
+        const previousLocation = lastLocation;
+        lastLocation = current;
+        pendingLocation = null;
+        pendingCount = 0;
+        pendingStartTime = null;
+        stationaryCount = 0;
+        return { changed: true, location: current, previousLocation };
       }
 
       const countMet = pendingCount >= min_transition_points;
@@ -106,6 +150,7 @@ export function createPOIDetector(config) {
         pendingLocation = null;
         pendingCount = 0;
         pendingStartTime = null;
+        stationaryCount = 0;
         return { changed: true, location: current, previousLocation };
       }
 
@@ -117,6 +162,7 @@ export function createPOIDetector(config) {
       pendingLocation = null;
       pendingCount = 0;
       pendingStartTime = null;
+      stationaryCount = 0;
     },
 
     getLocation() {
@@ -131,6 +177,7 @@ export function createPOIDetector(config) {
       pendingLocation = null;
       pendingCount = 0;
       pendingStartTime = null;
+      stationaryCount = 0;
     },
 
     forceResolve(lat, lon) {
@@ -138,6 +185,7 @@ export function createPOIDetector(config) {
       pendingLocation = null;
       pendingCount = 0;
       pendingStartTime = null;
+      stationaryCount = 0;
       if (current === lastLocation) {
         return { changed: false, location: lastLocation, previousLocation: lastLocation };
       }

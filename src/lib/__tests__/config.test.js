@@ -368,3 +368,37 @@ geocode:
     assert.throws(() => loadConfig(filePath), { message: /cache_radius_m.*positive/ });
   });
 });
+
+describe('poi.immediate_arrival_stationary_points', () => {
+  afterEach(() => {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('accepts a non-negative integer', () => {
+    const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  immediate_arrival_stationary_points: 1
+  locations:
+    - name: Home
+      lat: 34.0
+      lon: -117.9
+`);
+    assert.equal(loadConfig(filePath).poi.immediate_arrival_stationary_points, 1);
+  });
+
+  it('rejects a negative or non-integer value', () => {
+    for (const bad of ['-1', '1.5']) {
+      const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  immediate_arrival_stationary_points: ${bad}
+  locations:
+    - name: Home
+      lat: 34.0
+      lon: -117.9
+`);
+      assert.throws(() => loadConfig(filePath), /immediate_arrival_stationary_points/);
+    }
+  });
+});

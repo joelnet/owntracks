@@ -6,6 +6,11 @@ poi:
   min_transition_points: 3
   exit_extra_m: 25
   min_transition_seconds: 300
+  # Arriving at an already-known POI skips the transition debounce above once the
+  # phone reports this many consecutive stationary (vel=0) fixes there. 1 =
+  # notify on the first parked fix (fastest, but a red light inside a POI radius
+  # can fire a false arrival). 0 disables the fast path.
+  immediate_arrival_stationary_points: 2
   locations:
     - name: Home
       points:

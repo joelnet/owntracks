@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { initSchema } from '../lib/db.js';
 import { createStore } from '../lib/store.js';
+import { createPOIDetector } from '../lib/poi.js';
 
 const locationCalls = [];
 mock.module('../lib/logger.js', {
@@ -823,4 +824,91 @@ describe('POST /pub', () => {
     assert.equal(rows[0].tst, staleTst, 'first entry stores original tst');
     assert.equal(rows[1].tst, staleTst, 'second entry stores original tst (not substituted)');
   });
+
+  it('notifies "Arrived at X" at a known POI once parked, without waiting out the dwell', async () => {
+    const notified = [];
+    // Production-like debounce: normally 3 points AND 300s before an arrival commits.
+    const detector = createPOIDetector({
+      poi: {
+        default_radius_m: 100,
+        min_transition_points: 3,
+        min_transition_seconds: 300,
+        locations: [{ name: 'Home', lat: 34.0170901, lon: -117.9025897, radius_m: 100 }],
+      },
+    });
+    const { store } = createTestStore();
+    const app = createApp({
+      username: TEST_USER, password: TEST_PASS, store, detector,
+      discord: { notify: (msg) => notified.push(msg) },
+    });
+    const park = (tst) => request(app)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.0173, lon: -117.9026, tst, vel: 0 });
+
+    await park(1711036800);
+    assert.deepEqual(notified, [], 'one parked fix is not yet an arrival');
+    await park(1711036830);
+    assert.deepEqual(notified, ['Arrived at Home'], 'second parked fix commits, 30s not 300s');
+    assert.equal(detector.getLocation(), 'Home');
+  });
+
+  it('does not notify an arrival from a single moving ping through a known POI', async () => {
+    const notified = [];
+    const detector = createPOIDetector({
+      poi: {
+        default_radius_m: 100,
+        min_transition_points: 3,
+        min_transition_seconds: 300,
+        locations: [{ name: 'Home', lat: 34.0170901, lon: -117.9025897, radius_m: 100 }],
+      },
+    });
+    const { store } = createTestStore();
+    const app = createApp({
+      username: TEST_USER, password: TEST_PASS, store, detector,
+      discord: { notify: (msg) => notified.push(msg) },
+    });
+    await request(app)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.0173, lon: -117.9026, tst: 1711036800, vel: 45 });
+    assert.deepEqual(notified, []);
+    assert.equal(detector.getLocation(), 'Roaming');
+  });
+
+  it('hands the known POI name to the visit detector, so no redundant lookup is opened', async () => {
+    const seen = [];
+    const visit = {
+      processPoint: (point, poiResult, activityState) => {
+        seen.push({ poiResult, activityState });
+        return null;
+      },
+      getState: () => ({ active: false }),
+      getLearnedPois: () => [],
+    };
+    const detector = createPOIDetector({
+      poi: {
+        default_radius_m: 100,
+        min_transition_points: 3,
+        min_transition_seconds: 300,
+        locations: [{ name: 'Saved Place', lat: 34.05, lon: -117.95 }],
+      },
+    });
+    const { store } = createTestStore();
+    const app = createApp({ username: TEST_USER, password: TEST_PASS, store, detector, visit });
+    const park = (tst) => request(app)
+      .post('/pub')
+      .set('Authorization', basicAuth(TEST_USER, TEST_PASS))
+      .send({ _type: 'location', lat: 34.05, lon: -117.95, tst, vel: 0 });
+
+    await park(1711036800);
+    await park(1711036830);
+    assert.equal(seen.length, 2);
+    // Once the POI is committed the visit detector sees the name, not 'Roaming',
+    // so it never opens a dwell session (and never reverse-geocodes) at a place
+    // that is already in the database.
+    assert.equal(seen[1].poiResult, 'Saved Place');
+    assert.equal(detector.getLocation(), 'Saved Place');
+  });
+
 });
