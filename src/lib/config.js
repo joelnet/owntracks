@@ -41,6 +41,10 @@ export function loadConfig(filePath) {
     throw new Error('poi.min_transition_seconds must be a non-negative number');
   }
 
+  if (poi.immediate_arrival_stationary_points !== undefined && (!Number.isInteger(poi.immediate_arrival_stationary_points) || poi.immediate_arrival_stationary_points < 0)) {
+    throw new Error('poi.immediate_arrival_stationary_points must be a non-negative integer');
+  }
+
   if (!Array.isArray(poi.locations) || poi.locations.length === 0) {
     throw new Error('poi.locations must be a non-empty array');
   }

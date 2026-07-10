@@ -497,3 +497,118 @@ describe('renameLocation', () => {
     assert.equal(detector.renameLocation('Nonexistent', 'Whatever'), false);
   });
 });
+
+describe('POI immediate arrival at a known location', () => {
+  function makeArrivalConfig(locations, overrides = {}) {
+    return {
+      poi: {
+        default_radius_m: 100,
+        min_transition_points: 3,
+        min_transition_seconds: 300,
+        locations,
+        ...overrides,
+      },
+    };
+  }
+
+  it('commits on the second consecutive stationary fix, skipping points and time gates', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    const first = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    assert.equal(first.changed, false, 'one stationary fix is not yet proof of arrival');
+
+    const second = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 0);
+    assert.equal(second.changed, true);
+    assert.equal(second.location, 'Home');
+    assert.equal(second.previousLocation, 'Roaming');
+    assert.equal(detector.getLocation(), 'Home');
+  });
+
+  it('a moving fix between stationary fixes resets the run (red light inside a POI radius)', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);  // stopped at the light
+    const moving = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 40); // drives on
+    assert.equal(moving.changed, false);
+    const next = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060, 0);
+    assert.equal(next.changed, false, 'stationary run restarted; still not committed');
+    assert.equal(detector.getLocation(), 'Roaming');
+  });
+
+  it('a drive-by that never reports vel=0 still requires the full debounce', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME], { min_transition_seconds: 0 }));
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 30);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1010, 30);
+    assert.equal(detector.getLocation(), 'Roaming');
+    const third = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1020, 30);
+    assert.equal(third.changed, true, 'commits only via min_transition_points');
+    assert.equal(third.location, 'Home');
+  });
+
+  it('vel undefined or -1 (unavailable) never fast-commits', () => {
+    const d1 = createPOIDetector(makeArrivalConfig([HOME]));
+    assert.equal(d1.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000).changed, false);
+    assert.equal(d1.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030).changed, false);
+    assert.equal(d1.getLocation(), 'Roaming');
+
+    const d2 = createPOIDetector(makeArrivalConfig([HOME]));
+    assert.equal(d2.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, -1).changed, false);
+    assert.equal(d2.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, -1).changed, false);
+    assert.equal(d2.getLocation(), 'Roaming');
+  });
+
+  it('parked out in the open never fast-commits a departure', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.setLocation('Home');
+    // FAR_AWAY resolves to Roaming; leaving stays governed by the exit debounce.
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000, 0);
+    const second = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030, 0);
+    assert.equal(second.changed, false);
+    assert.equal(second.location, 'Home');
+  });
+
+  it('is a no-op when already at the POI (no spurious re-arrival)', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.setLocation('Home');
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    assert.equal(r.changed, false);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('fast-commits a direct POI -> POI arrival once parked', () => {
+    const OFFICE = { name: 'Office', lat: FAR_AWAY.lat, lon: FAR_AWAY.lon };
+    const detector = createPOIDetector(makeArrivalConfig([HOME, OFFICE]));
+    detector.setLocation('Home');
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000, 0);
+    const second = detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1030, 0);
+    assert.equal(second.changed, true);
+    assert.equal(second.location, 'Office');
+    assert.equal(second.previousLocation, 'Home');
+  });
+
+  it('clears pending state so a later point does not re-fire', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 0).changed, true);
+    const after = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060, 0);
+    assert.equal(after.changed, false);
+    assert.equal(after.location, 'Home');
+  });
+
+  it('immediate_arrival_stationary_points=1 commits on the first parked fix', () => {
+    const detector = createPOIDetector(
+      makeArrivalConfig([HOME], { immediate_arrival_stationary_points: 1 })
+    );
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    assert.equal(r.changed, true);
+    assert.equal(r.location, 'Home');
+  });
+
+  it('immediate_arrival_stationary_points=0 disables the fast path entirely', () => {
+    const detector = createPOIDetector(
+      makeArrivalConfig([HOME], { immediate_arrival_stationary_points: 0, min_transition_seconds: 0 })
+    );
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, 0);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 0);
+    assert.equal(detector.getLocation(), 'Roaming', 'still waiting for min_transition_points');
+    assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060, 0).changed, true);
+  });
+});

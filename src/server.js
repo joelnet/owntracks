@@ -65,13 +65,12 @@ export function createApp({ username, password, store, detector, discord, activi
       received_at: new Date().toISOString(),
     };
 
-    // Skip low-accuracy GPS readings before any detection. Clear any
-    // half-accumulated POI transition so a noisy point can't count toward a
-    // false arrival/departure once we later see a clean fix.
+    // Skip low-accuracy GPS readings before any detection. Leave any
+    // pending POI transition intact — skipped points never reach detect(),
+    // so they can't advance a transition, but resetting here would erase
+    // legitimate progress from prior clean points whenever SKIPs are
+    // interleaved with them (matches the replay path in report.js).
     if (maxAccuracy && typeof entry.acc === 'number' && entry.acc > maxAccuracy) {
-      if (detector && typeof detector.resetPending === 'function') {
-        detector.resetPending();
-      }
       store.appendEntry(entry);
       log.info(`Entry saved (skipped detection, acc=${entry.acc}): user=${user} device=${device} type=${entry.type}`);
       return res.status(200).json([]);

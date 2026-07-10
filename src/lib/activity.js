@@ -16,6 +16,11 @@ export function createActivityDetector(config) {
   let pendingState = null;
   let pendingCount = 0;
   let pendingStartTime = null;
+  // Carries the activity state we were in just before a gap-reset to
+  // STATIONARY, so post-gap motion at walking-speed (typical urban end-of-trip
+  // with vel=null) can resolve back to DRIVING instead of WALKING. Cleared
+  // once the classifier commits to STATIONARY for real.
+  let preGapDriving = false;
 
   function computeMedianSpeed() {
     const speeds = [];
@@ -36,15 +41,23 @@ export function createActivityDetector(config) {
     return speeds.length > 0 ? median(speeds) : null;
   }
 
-  function classify(medianSpeed, timestamp) {
+  function classify(medianSpeed, timestamp, allVelMissing = false) {
     if (medianSpeed >= driving_min_kmh) { dwellStart = null; return 'DRIVING'; }
     if (currentState === 'DRIVING' && medianSpeed >= walking_max_kmh) { dwellStart = null; return 'DRIVING'; }
+    // Post-gap DRIVING continuity: if we gap-reset out of DRIVING and the next
+    // window has no vel telemetry, any non-zero motion is more likely a slow
+    // finish to the same trip (urban canyon, parking lot, slow residential
+    // streets) than actual walking. The bimodal-jitter guard above overrides
+    // medianSpeed to 0 when the window fits a small bounding box, so requiring
+    // medianSpeed > 0 here still lets a real stop fall through to STATIONARY.
+    // Cleared once the classifier commits to STATIONARY for real.
+    if (preGapDriving && allVelMissing && medianSpeed > 0) {
+      dwellStart = null; return 'DRIVING';
+    }
     if (medianSpeed >= walking_max_kmh) { dwellStart = null; return 'WALKING'; }
-    // Already stationary: low speed keeps us stationary. Dwell threshold
-    // gates *entering* STATIONARY, not maintaining it across data gaps.
-    if (currentState === 'STATIONARY') return 'STATIONARY';
+    if (currentState === 'STATIONARY') { preGapDriving = false; return 'STATIONARY'; }
     if (dwellStart === null) dwellStart = timestamp;
-    if (timestamp - dwellStart >= dwell_threshold_minutes * 60) return 'STATIONARY';
+    if (timestamp - dwellStart >= dwell_threshold_minutes * 60) { preGapDriving = false; return 'STATIONARY'; }
     return 'WALKING';
   }
 
@@ -62,6 +75,7 @@ export function createActivityDetector(config) {
             timestamp: lastTimestamp + dwell_threshold_minutes * 60,
           };
         }
+        if (currentState === 'DRIVING') preGapDriving = true;
         currentState = 'STATIONARY';
         window = [];
         dwellStart = null;
@@ -146,7 +160,8 @@ export function createActivityDetector(config) {
       }
 
       const latestTimestamp = window[window.length - 1].timestamp;
-      const candidate = classify(medianSpeed, latestTimestamp);
+      const allVelMissingWindow = window.every(p => typeof p.vel !== 'number' || p.vel < 0);
+      const candidate = classify(medianSpeed, latestTimestamp, allVelMissingWindow);
 
       if (candidate === pendingState) {
         pendingCount++;

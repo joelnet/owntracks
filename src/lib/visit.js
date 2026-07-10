@@ -210,6 +210,12 @@ export function createVisitDetector(config, savedState) {
     loadLearnedPois(pois) {
       learnedPois = pois.map(p => ({ ...p }));
     },
+    // Append a single learned POI (e.g. one created on demand via Discord) to
+    // the in-memory list so it survives the next persist, which rebuilds the
+    // learned_pois table from this list (delete-all + reinsert).
+    addLearnedPoi(poi) {
+      learnedPois.push({ ...poi });
+    },
     setKnownPois(pois) {
       knownPois = pois.map(p => ({ ...p }));
     },

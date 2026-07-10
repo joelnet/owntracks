@@ -1,13 +1,21 @@
 import { Client, GatewayIntentBits, SlashCommandBuilder, REST, Routes } from 'discord.js';
 import { generateReport } from './report.js';
 
+// The /location slash command's response when the user isn't at a known POI.
+// Replying to this message saves a brand-new POI at the current position
+// (see createLearnedLocationHere) rather than renaming an existing one.
+export const ROAMING_LOCATION_MESSAGE = 'Currently Roaming';
+
 // Notification formats that carry a location name the user can correct by
 // replying. The captured group is the location name as it was announced.
+// "Currently at X" is the /location command's response when already at a POI,
+// so replying to it renames that POI just like replying to a live arrival.
 const LOCATION_MESSAGE_PATTERNS = [
   /^Arrived at (.+)$/s,
   /^POI Lookup at (.+)$/s,
   /^Left (.+) — \d+ min visit$/s,
   /^Left (.+) \(now Roaming\)$/s,
+  /^Currently at (.+)$/s,
 ];
 
 // Extract the announced location name from one of our own notifications, or
@@ -19,6 +27,12 @@ export function parseLocationName(content) {
     if (match) return match[1].trim();
   }
   return null;
+}
+
+// True when the message is the /location "Roaming" response — replying to it
+// creates a new POI at the current position instead of renaming one.
+export function isRoamingLocationMessage(content) {
+  return content === ROAMING_LOCATION_MESSAGE;
 }
 
 export function createDiscordClient({ token, channelId, guildId, detector, config, db, visit }) {
@@ -50,6 +64,52 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
     if (visit?.renameLearnedPoi) visit.renameLearnedPoi(row.lat, row.lon, newName);
     if (detector?.renameLocation) detector.renameLocation(oldName, newName);
     return { ok: true };
+  }
+
+  // Latest known GPS position, used to anchor an on-demand POI. Mirrors the
+  // seed query in server.js (newest by tst).
+  function currentPosition() {
+    if (!db) return null;
+    const row = db.prepare(
+      'SELECT lat, lon FROM location_entries WHERE lat IS NOT NULL AND lon IS NOT NULL ORDER BY tst DESC LIMIT 1'
+    ).get();
+    return row ? { lat: row.lat, lon: row.lon } : null;
+  }
+
+  // Create a learned POI at the current position. Lets the user save a place
+  // while Roaming — before the auto POI-lookup fires, or when the visit guard
+  // suppresses it. Returns { ok, reason?, lat?, lon? }.
+  function createLearnedLocationHere(name) {
+    if (!db) return { ok: false, reason: 'unavailable' };
+    const pos = currentPosition();
+    if (!pos) return { ok: false, reason: 'no_location' };
+
+    const radius_m = config?.visit_detection?.learned_poi_radius_m
+      ?? config?.poi?.default_radius_m ?? 100;
+    const now = new Date().toISOString();
+    const poi = {
+      name,
+      address: name,
+      lat: pos.lat,
+      lon: pos.lon,
+      radius_m,
+      discovered_at: now,
+      visit_count: 1,
+      last_visited_at: now,
+    };
+
+    db.prepare(`
+      INSERT INTO learned_pois (name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)
+      VALUES (@name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at)
+    `).run(poi);
+
+    // Mirror into the live detectors: the visit detector so the next persist
+    // (delete-all + reinsert from its in-memory list) keeps the row, and the
+    // POI detector so /location recognizes the spot immediately.
+    if (visit?.addLearnedPoi) visit.addLearnedPoi(poi);
+    if (detector?.addLocation) detector.addLocation({ ...poi });
+
+    return { ok: true, lat: pos.lat, lon: pos.lon };
   }
 
   client.once('clientReady', async () => {
@@ -96,7 +156,12 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
         }
 
         const location = detector.getLocation();
-        await interaction.reply({ content: `Currently ${location === 'Roaming' ? 'Roaming' : `at ${location}`}`, ephemeral: true });
+        const content = location === 'Roaming'
+          ? ROAMING_LOCATION_MESSAGE
+          : `Currently at ${location}`;
+        // Non-ephemeral so the user can reply to it: replying to "Roaming"
+        // saves a new POI here, replying to "at X" renames that POI.
+        await interaction.reply({ content });
       } catch (err) {
         console.error('Discord interaction error:', err.message);
       }
@@ -180,11 +245,26 @@ export function createDiscordClient({ token, channelId, guildId, detector, confi
       }
       if (!referenced || referenced.author.id !== client.user.id) return;
 
-      const oldName = parseLocationName(referenced.content);
-      if (!oldName) return;
-
       const newName = message.content.trim();
       if (!newName) return;
+
+      // Replying to "Currently Roaming" saves a brand-new POI at the current
+      // position — for when the auto POI-lookup hasn't fired yet or the visit
+      // guard suppressed it.
+      if (isRoamingLocationMessage(referenced.content)) {
+        const result = createLearnedLocationHere(newName);
+        if (result.ok) {
+          await message.reply(`✅ Saved **${newName}** as a POI here (${result.lat.toFixed(5)}, ${result.lon.toFixed(5)})`);
+        } else if (result.reason === 'no_location') {
+          await message.reply(`⚠️ No recent GPS fix to anchor a POI here.`);
+        } else {
+          await message.reply(`⚠️ Saving a POI is unavailable right now.`);
+        }
+        return;
+      }
+
+      const oldName = parseLocationName(referenced.content);
+      if (!oldName) return;
 
       const result = renameLearnedLocation(oldName, newName);
       if (result.ok) {
