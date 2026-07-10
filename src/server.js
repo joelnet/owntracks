@@ -25,6 +25,9 @@ export function createApp({ username, password, store, detector, discord, activi
 
   app.use(express.json());
 
+  // Health check (unauthenticated) for uptime monitoring (Uptime Kuma).
+  app.get("/healthz", (_req, res) => res.json({ ok: true }));
+
   app.post("/pub", async (req, res) => {
     // Validate Basic Auth
     const authHeader = req.headers.authorization;
