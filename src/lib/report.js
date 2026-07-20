@@ -118,8 +118,11 @@ export async function generateReport(date, config, db, timezone) {
     ? Math.max(nowTst, lastEntryTst) // today: end at "now" (clamp up to last entry if clock skew)
     : nextMidnightTst - 1; // past day: 23:59:59 of the date
 
-  // Process through detectors
-  const poi = createPOIDetector(config);
+  // Process through detectors. Displacement-based stationary inference is
+  // disabled here (as vel already is — the replay never passes it) so the
+  // immediate-arrival and drift-suppression fast paths stay inert and tuning
+  // baselines stay locked.
+  const poi = createPOIDetector({ ...config, poi: { ...config.poi, stationary_displacement_m: 0 } });
   const activity = config.activity?.enabled
     ? createActivityDetector(config.activity)
     : null;

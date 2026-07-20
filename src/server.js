@@ -97,6 +97,9 @@ export function createApp({ username, password, store, detector, discord, activi
     ) {
       const result = detector.detect(entry.lat, entry.lon, effectiveTst, entry.vel);
       if (result.changed) {
+        if (result.immediate) {
+          log.info(`Immediate arrival fast path fired: ${result.location}`);
+        }
         log.location(`Location: ${result.location}`);
 
         if (discord) {

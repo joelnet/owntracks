@@ -402,3 +402,37 @@ poi:
     }
   });
 });
+
+describe('poi.stationary_displacement_m', () => {
+  afterEach(() => {
+    fs.rmSync(TMP_DIR, { recursive: true, force: true });
+  });
+
+  it('accepts a non-negative number', () => {
+    const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  stationary_displacement_m: 15
+  locations:
+    - name: Home
+      lat: 34.0
+      lon: -117.9
+`);
+    assert.equal(loadConfig(filePath).poi.stationary_displacement_m, 15);
+  });
+
+  it('rejects a negative or non-numeric value', () => {
+    for (const bad of ['-1', '"far"']) {
+      const filePath = writeConfig(`
+poi:
+  default_radius_m: 100
+  stationary_displacement_m: ${bad}
+  locations:
+    - name: Home
+      lat: 34.0
+      lon: -117.9
+`);
+      assert.throws(() => loadConfig(filePath), /stationary_displacement_m/);
+    }
+  });
+});

@@ -543,12 +543,7 @@ describe('POI immediate arrival at a known location', () => {
     assert.equal(third.location, 'Home');
   });
 
-  it('vel undefined or -1 (unavailable) never fast-commits', () => {
-    const d1 = createPOIDetector(makeArrivalConfig([HOME]));
-    assert.equal(d1.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000).changed, false);
-    assert.equal(d1.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030).changed, false);
-    assert.equal(d1.getLocation(), 'Roaming');
-
+  it('vel=-1 (unavailable) never fast-commits', () => {
     const d2 = createPOIDetector(makeArrivalConfig([HOME]));
     assert.equal(d2.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1000, -1).changed, false);
     assert.equal(d2.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, -1).changed, false);
@@ -610,5 +605,78 @@ describe('POI immediate arrival at a known location', () => {
     detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030, 0);
     assert.equal(detector.getLocation(), 'Roaming', 'still waiting for min_transition_points');
     assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060, 0).changed, true);
+  });
+});
+
+// OwnTracks Android >= 2.5.9 omits vel entirely when parked instead of sending
+// vel=0, so "parked" must be derived from displacement between fixes.
+describe('POI displacement-based stationary detection (vel omitted)', () => {
+  const NEAR_HOME_DRIFT = { lat: 34.01731, lon: -117.9026 }; // ~1m from NEAR_HOME
+  const NEAR_HOME_22M = { lat: 34.0175, lon: -117.9026 };    // ~22m from NEAR_HOME, still inside Home
+
+  function makeArrivalConfig(locations, overrides = {}) {
+    return {
+      poi: {
+        default_radius_m: 100,
+        min_transition_points: 3,
+        min_transition_seconds: 300,
+        locations,
+        ...overrides,
+      },
+    };
+  }
+
+  it('parked fixes with no vel field fast-commit the arrival (immediate flag set)', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);           // seed reference fix
+    assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030).changed, false); // drove in: 490m moved
+    assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060).changed, false); // stationary 1
+    const r = detector.detect(NEAR_HOME_DRIFT.lat, NEAR_HOME_DRIFT.lon, 1090);        // stationary 2
+    assert.equal(r.changed, true, 'commits at 90s, not the 300s debounce');
+    assert.equal(r.location, 'Home');
+    assert.equal(r.immediate, true);
+  });
+
+  it('coarse no-vel fixes moving through the POI never fast-commit', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030);
+    const r = detector.detect(NEAR_HOME_22M.lat, NEAR_HOME_22M.lon, 1060); // 22m > 15m threshold
+    assert.equal(r.changed, false);
+    assert.equal(detector.getLocation(), 'Roaming');
+  });
+
+  it('a moving fix (vel > 0) resets a displacement-built stationary run', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060);           // stationary 1
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1090, 40);       // red light over, drives on
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1120); // stationary 1 again
+    assert.equal(r.changed, false, 'run restarted; not committed');
+    assert.equal(detector.getLocation(), 'Roaming');
+  });
+
+  it('duplicate deliveries (<10s apart) neither advance nor reset the run', () => {
+    const detector = createPOIDetector(makeArrivalConfig([HOME]));
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060);                       // stationary 1
+    assert.equal(detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1065).changed, false); // dup: unknown
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1090);             // stationary 2
+    assert.equal(r.changed, true);
+    assert.equal(r.immediate, true);
+  });
+
+  it('stationary_displacement_m=0 disables the fallback (report replay lock)', () => {
+    const detector = createPOIDetector(
+      makeArrivalConfig([HOME], { stationary_displacement_m: 0 })
+    );
+    detector.detect(FAR_AWAY.lat, FAR_AWAY.lon, 1000);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1030);
+    detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1060);
+    const r = detector.detect(NEAR_HOME.lat, NEAR_HOME.lon, 1090);
+    assert.equal(r.changed, false, 'no vel and no fallback: only the debounce can commit');
+    assert.equal(detector.getLocation(), 'Roaming');
   });
 });

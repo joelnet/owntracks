@@ -6,11 +6,18 @@ poi:
   min_transition_points: 3
   exit_extra_m: 25
   min_transition_seconds: 300
-  # Arriving at an already-known POI skips the transition debounce above once the
-  # phone reports this many consecutive stationary (vel=0) fixes there. 1 =
-  # notify on the first parked fix (fastest, but a red light inside a POI radius
-  # can fire a false arrival). 0 disables the fast path.
+  # Arriving at an already-known POI skips the transition debounce above once
+  # this many consecutive stationary fixes land there. 1 = notify on the first
+  # parked fix (fastest, but a red light inside a POI radius can fire a false
+  # arrival). 0 disables the fast path.
   immediate_arrival_stationary_points: 2
+  # A fix with no vel field counts as stationary when it moved at most this far
+  # (meters) from the previous fix. OwnTracks Android >= 2.5.9 omits vel
+  # entirely when parked instead of sending vel=0, so displacement is the only
+  # parked signal. Replay of May 12 - Jul 19 data: 0 false arrivals at 10-30m;
+  # 15m accelerated 40 arrivals (up to 15 min faster). 0 disables the fallback
+  # (fast path then requires literal vel=0 fixes, which the phone no longer sends).
+  stationary_displacement_m: 15
   locations:
     - name: Home
       points:

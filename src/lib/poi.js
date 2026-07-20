@@ -30,6 +30,10 @@ export function poiAnchors(poi, defaultRadius) {
   }];
 }
 
+// Fixes arriving closer together than this (duplicate MQTT deliveries of the
+// same physical fix) can't say anything about motion on their own.
+const STATIONARY_MIN_GAP_S = 10;
+
 export function createPOIDetector(config) {
   const {
     default_radius_m,
@@ -38,15 +42,40 @@ export function createPOIDetector(config) {
     exit_extra_m = 0,
     min_transition_seconds = 0,
     immediate_arrival_stationary_points = 2,
+    stationary_displacement_m = 15,
   } = config.poi;
   let lastLocation = 'Roaming';
   let pendingLocation = null;
   let pendingCount = 0;
   let pendingStartTime = null;
-  // Consecutive phone-confirmed stationary fixes (vel === 0) resolving to the
-  // current pending location. Resets whenever the pending location changes or a
-  // moving fix arrives.
+  // Consecutive stationary fixes resolving to the current pending location.
+  // Resets whenever the pending location changes or a moving fix arrives.
   let stationaryCount = 0;
+  // Previous fix seen by detect(), the reference for displacement-based
+  // motion classification.
+  let lastFix = null;
+
+  // Classify a fix as 'stationary' | 'moving' | 'unknown'. Phone-reported
+  // velocity wins when present. When absent, fall back to displacement from
+  // the previous fix: OwnTracks Android >= 2.5.9 omits zero-valued fields
+  // (per the OwnTracks JSON spec), so a parked phone sends no vel key at all
+  // — but coarse network fixes mid-drive also omit vel, so small displacement
+  // must confirm it. Fixes closer than STATIONARY_MIN_GAP_S apart are
+  // 'unknown': they neither advance nor reset a stationary streak. Setting
+  // stationary_displacement_m to 0 disables the displacement fallback
+  // (used by the report replay to keep tuning baselines locked).
+  function classifyMotion(lat, lon, tst, vel) {
+    const prev = lastFix;
+    lastFix = { lat, lon, tst };
+    if (vel === 0) return 'stationary';
+    if (typeof vel === 'number') return 'moving';
+    if (!stationary_displacement_m) return 'unknown';
+    if (!prev || typeof tst !== 'number' || typeof prev.tst !== 'number') return 'unknown';
+    if (tst - prev.tst < STATIONARY_MIN_GAP_S) return 'unknown';
+    return haversineDistance(lat, lon, prev.lat, prev.lon) <= stationary_displacement_m
+      ? 'stationary'
+      : 'moving';
+  }
 
   function poiContains(poi, lat, lon, extraBuffer = 0) {
     for (const a of poiAnchors(poi, default_radius_m)) {
@@ -75,10 +104,12 @@ export function createPOIDetector(config) {
 
   return {
     detect(lat, lon, tst, vel) {
-      // If at a known POI and phone confirms stationary (vel=0),
+      const motion = classifyMotion(lat, lon, tst, vel);
+
+      // If at a known POI and the fix is stationary,
       // AND GPS still shows within the POI's exit radius,
       // GPS drift cannot cause a departure — reset any pending exit.
-      if (lastLocation !== 'Roaming' && typeof vel === 'number' && vel === 0) {
+      if (lastLocation !== 'Roaming' && motion === 'stationary') {
         const currentPoi = locations.find(p => p.name === lastLocation);
         if (currentPoi && poiContains(currentPoi, lat, lon, exit_extra_m)) {
           pendingLocation = null;
@@ -108,7 +139,9 @@ export function createPOIDetector(config) {
         stationaryCount = 0;
       }
 
-      stationaryCount = (typeof vel === 'number' && vel === 0) ? stationaryCount + 1 : 0;
+      stationaryCount = motion === 'stationary' ? stationaryCount + 1
+        : motion === 'moving' ? 0
+        : stationaryCount;
 
       // Immediate arrival at a known location. The transition debounce
       // (min_transition_points / min_transition_seconds) exists to reject
@@ -118,12 +151,11 @@ export function createPOIDetector(config) {
       // Mirrors the DRIVING departure fast path in server.js.
       //
       // Arrival is confirmed by `immediate_arrival_stationary_points`
-      // consecutive stationary fixes (vel === 0) rather than one, because a
-      // single vel === 0 is not proof of arrival: phones report zero velocity at
-      // red lights and during Doppler dropouts mid-drive, and several learned
-      // POIs sit on roads. Requiring two costs one extra ping (~30s, versus the
-      // 5-minute dwell) and rejects those. A moving fix resets the run, so
-      // drive-bys still take the full debounce path.
+      // consecutive stationary fixes rather than one, because a single
+      // stationary fix is not proof of arrival: cars sit still at red lights,
+      // and several learned POIs sit on roads. Requiring two costs one extra
+      // ping (~30s, versus the 5-minute dwell) and rejects those. A moving fix
+      // resets the run, so drive-bys still take the full debounce path.
       if (
         immediate_arrival_stationary_points > 0 &&
         current !== 'Roaming' &&
@@ -135,7 +167,7 @@ export function createPOIDetector(config) {
         pendingCount = 0;
         pendingStartTime = null;
         stationaryCount = 0;
-        return { changed: true, location: current, previousLocation };
+        return { changed: true, location: current, previousLocation, immediate: true };
       }
 
       const countMet = pendingCount >= min_transition_points;
