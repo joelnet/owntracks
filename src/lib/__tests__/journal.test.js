@@ -103,6 +103,23 @@ describe('journal', () => {
     assert.ok(!md.includes('Home'), md);
   });
 
+  it('describes an excluded baseline location when it lasted all day', async () => {
+    config.journal.exclude = ['Home'];
+
+    insertEntries(db, [
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-19T23:00:00Z'), acc: 10 },
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-20T08:00:00Z'), acc: 10 },
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-20T20:00:00Z'), acc: 10 },
+    ]);
+
+    const journal = createJournal({ config, db });
+    const file = await journal.writeDay('2026-03-20');
+    const md = fs.readFileSync(file, 'utf-8');
+
+    assert.ok(md.includes('- At **Home** all day'), md);
+    assert.ok(!md.includes('from 12:00 AM'), md);
+  });
+
   it('renders the current stay as "since" while the day is in progress', async () => {
     const today = new Date().toLocaleDateString('en-CA', { timeZone: 'UTC' });
     insertEntries(db, [
@@ -152,5 +169,43 @@ describe('journal', () => {
     const file = await journal.writeDay('2026-01-01');
     assert.equal(file, null);
     assert.deepEqual(fs.readdirSync(dir), []);
+  });
+
+  it('pushes Kuma only after a successful midnight finalization', async () => {
+    config.journal.exclude = ['Home'];
+    insertEntries(db, [
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-19T23:00:00Z'), acc: 10 },
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-20T12:00:00Z'), acc: 10 },
+    ]);
+
+    const pushUrl = 'https://kuma.example/api/push/token?status=up&msg=OK&ping=';
+    const calls = [];
+    const fetchImpl = async (url) => {
+      assert.ok(fs.existsSync(path.join(dir, '2026-03-20-location.md')));
+      calls.push(url);
+      return { ok: true, status: 200 };
+    };
+    const journal = createJournal({ config, db, kumaPushUrl: pushUrl, fetchImpl });
+
+    const file = await journal.runMidnightFinalize('2026-03-21');
+
+    assert.equal(file, path.join(dir, '2026-03-20-location.md'));
+    assert.deepEqual(calls, [pushUrl]);
+  });
+
+  it('does not push Kuma when no journal file can be finalized', async () => {
+    let pushed = false;
+    const journal = createJournal({
+      config,
+      db,
+      kumaPushUrl: 'https://kuma.example/api/push/token',
+      fetchImpl: async () => { pushed = true; return { ok: true, status: 200 }; },
+    });
+
+    await assert.rejects(
+      journal.runMidnightFinalize('2026-03-21'),
+      /No location data for 2026-03-20/,
+    );
+    assert.equal(pushed, false);
   });
 });

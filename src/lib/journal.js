@@ -12,6 +12,7 @@ import {
 } from './report.js';
 
 const DEBOUNCE_MS = 5000;
+const KUMA_TIMEOUT_MS = 30_000;
 // Finalize yesterday's file a few minutes after midnight so late-arriving
 // points (phone upload lag) still land in the right day.
 const MIDNIGHT_GRACE_MS = 5 * 60 * 1000;
@@ -87,16 +88,25 @@ export function renderDailyNote(day, config) {
   // Home (or anything else in journal.exclude) is the baseline, not a stop
   // worth logging — the journal lists only places gone to.
   const excluded = new Set(config.journal?.exclude ?? []);
-  const stays = buildStays(day).filter(s => !excluded.has(s.location));
+  const allStays = buildStays(day);
+  const stays = allStays.filter(s => !excluded.has(s.location));
   const timeline = [];
-  for (const stay of stays) {
-    const from = toLocalTime(stay.start, tz);
-    const dur = ` _(${formatDuration(stay.end - stay.start)})_`;
-    if (day.ongoing && stay.end === day.dayEndTst) {
-      // Still there right now — an end time would read as a departure.
-      timeline.push(`- **${stay.location}** since ${from}${dur}`);
-    } else {
-      timeline.push(`- **${stay.location}** from ${from} to ${toLocalTime(stay.end, tz)}${dur}`);
+  const allDayBaseline = !day.ongoing && allStays.length === 1 &&
+    excluded.has(allStays[0].location) &&
+    allStays[0].start === day.dayStartTst && allStays[0].end === day.dayEndTst;
+
+  if (allDayBaseline) {
+    timeline.push(`- At **${allStays[0].location}** all day`);
+  } else {
+    for (const stay of stays) {
+      const from = toLocalTime(stay.start, tz);
+      const dur = ` _(${formatDuration(stay.end - stay.start)})_`;
+      if (day.ongoing && stay.end === day.dayEndTst) {
+        // Still there right now — an end time would read as a departure.
+        timeline.push(`- **${stay.location}** since ${from}${dur}`);
+      } else {
+        timeline.push(`- **${stay.location}** from ${from} to ${toLocalTime(stay.end, tz)}${dur}`);
+      }
     }
   }
   lines.push(...timeline);
@@ -120,7 +130,12 @@ export function renderDailyNote(day, config) {
   return lines.join('\n');
 }
 
-export function createJournal({ config, db }) {
+export function createJournal({
+  config,
+  db,
+  kumaPushUrl = process.env.UPTIME_KUMA_JOURNAL_PUSH_URL,
+  fetchImpl = globalThis.fetch,
+}) {
   const journalConfig = config.journal;
   const tz = journalConfig.timezone || process.env.TZ || 'America/Los_Angeles';
   const dir = journalConfig.dir;
@@ -170,6 +185,35 @@ export function createJournal({ config, db }) {
     debounceTimer.unref?.();
   }
 
+  async function pushKuma(date) {
+    if (!kumaPushUrl) return;
+    if (typeof fetchImpl !== 'function') throw new Error('fetch is unavailable for Kuma heartbeat');
+
+    const response = await fetchImpl(kumaPushUrl, {
+      method: 'GET',
+      signal: AbortSignal.timeout(KUMA_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Kuma heartbeat returned HTTP ${response.status}`);
+    }
+    await response.text?.();
+    log.info(`Journal Kuma heartbeat sent for ${date}`);
+  }
+
+  async function runMidnightFinalize(today = todayInTz(tz)) {
+    const date = adjacentDate(today, -1);
+    const target = await writeDay(date);
+    if (!target) {
+      throw new Error(`No location data for ${date}; journal was not finalized`);
+    }
+
+    // Open today's note if the phone has already uploaded an after-midnight
+    // point, then report success only after all vault writes have completed.
+    await writeDay(today);
+    await pushKuma(date);
+    return target;
+  }
+
   function scheduleMidnightFinalize() {
     const nextMidnightMs = localMidnightTst(adjacentDate(todayInTz(tz), 1), tz) * 1000;
     const delay = Math.max(nextMidnightMs - Date.now() + MIDNIGHT_GRACE_MS, MIDNIGHT_GRACE_MS);
@@ -177,10 +221,10 @@ export function createJournal({ config, db }) {
       const today = todayInTz(tz);
       try {
         // Seal yesterday's note (day-end becomes 11:59 PM) and open today's.
-        await writeDay(adjacentDate(today, -1));
-        await writeDay(today);
+        const target = await runMidnightFinalize(today);
+        log.info(`Journal finalized: ${target}`);
       } catch (err) {
-        log.error(`Journal midnight write failed: ${err.message}`);
+        log.error(`Journal midnight finalization failed: ${err.message}`);
       }
       scheduleMidnightFinalize();
     }, delay);
@@ -204,5 +248,5 @@ export function createJournal({ config, db }) {
     midnightTimer = null;
   }
 
-  return { writeDay, scheduleUpdate, start, stop };
+  return { writeDay, runMidnightFinalize, scheduleUpdate, start, stop };
 }

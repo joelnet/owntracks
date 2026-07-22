@@ -2,7 +2,7 @@ import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { initSchema } from '../db.js';
-import { generateReport } from '../report.js';
+import { buildDayData, generateReport } from '../report.js';
 
 function insertEntries(db, entries) {
   const stmt = db.prepare(`
@@ -17,6 +17,10 @@ function insertEntries(db, entries) {
       e.received_at ?? new Date().toISOString(), JSON.stringify(e)
     );
   }
+}
+
+function tstAt(iso) {
+  return Math.floor(new Date(iso).getTime() / 1000);
 }
 
 const baseConfig = {
@@ -142,5 +146,34 @@ describe('generateReport', () => {
     const report = await generateReport('2026-03-20', configWithActivity, db, 'UTC');
     assert.ok(report);
     assert.ok(report.includes('Activity Summary'));
+  });
+
+  it('stops final walking/driving totals after a long end-of-day GPS gap', async () => {
+    const configWithActivity = {
+      ...baseConfig,
+      activity: {
+        enabled: true,
+        walking_max_kmh: 7,
+        driving_min_kmh: 25,
+        dwell_threshold_minutes: 5,
+        window_size: 3,
+        min_transition_seconds: 0,
+        min_point_interval_seconds: 0,
+      },
+    };
+
+    insertEntries(db, [
+      { lat: 34.017, lon: -117.903, tst: tstAt('2026-03-20T09:00:00Z'), acc: 10, vel: 60 },
+      { lat: 34.027, lon: -117.903, tst: tstAt('2026-03-20T09:01:00Z'), acc: 10, vel: 60 },
+      { lat: 34.037, lon: -117.903, tst: tstAt('2026-03-20T09:02:00Z'), acc: 10, vel: 60 },
+      { lat: 34.047, lon: -117.903, tst: tstAt('2026-03-20T09:03:00Z'), acc: 10, vel: 60 },
+      { lat: 34.057, lon: -117.903, tst: tstAt('2026-03-20T09:04:00Z'), acc: 10, vel: 60 },
+    ]);
+
+    const day = await buildDayData('2026-03-20', configWithActivity, db, 'UTC');
+    const drivingSeconds = day.activityTotals.find(([state]) => state === 'DRIVING')?.[1];
+
+    assert.ok(drivingSeconds > 0, day.activityTotals);
+    assert.ok(drivingSeconds <= 10 * 60, `driving incorrectly extended to midnight: ${drivingSeconds}s`);
   });
 });

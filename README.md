@@ -47,6 +47,9 @@ OWNTRACKS_PASSWORD=your-secret-password
 DISCORD_TOKEN=your-bot-token
 DISCORD_CHANNEL_ID=your-channel-id
 DISCORD_GUILD_ID=your-guild-id
+
+# Optional — heartbeat sent after the daily vault journal is finalized
+UPTIME_KUMA_JOURNAL_PUSH_URL=https://kuma.example/api/push/your-token?status=up&msg=OK&ping=
 ```
 
 ### POI and Activity Detection

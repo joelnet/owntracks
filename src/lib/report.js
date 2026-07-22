@@ -248,10 +248,21 @@ export async function buildDayData(date, config, db, timezone) {
     ? poi.resolveLocation(lastDayEntry.lat, lastDayEntry.lon)
     : poi.getLocation();
   const dwellThresholdSec = (config.activity?.dwell_threshold_minutes ?? 5) * 60;
+  const hasEndGap = lastDayEntry && (dayEndTst - lastDayEntry.tst) > dwellThresholdSec;
+  const replayEndActivity = activity?.getState();
+  if (activity && hasEndGap && replayEndActivity !== 'STATIONARY' && replayEndActivity !== 'UNKNOWN') {
+    // No point arrived to trigger the detector's normal gap transition. Close
+    // movement after the dwell threshold so a final daily summary does not
+    // count Walking/Driving all the way to midnight.
+    events.push({
+      tst: lastDayEntry.tst + dwellThresholdSec,
+      type: 'activity',
+      state: 'STATIONARY',
+      previousState: replayEndActivity,
+    });
+  }
   const endActivity = activity
-    ? (lastDayEntry && (dayEndTst - lastDayEntry.tst) > dwellThresholdSec
-        ? 'STATIONARY'
-        : activity.getState())
+    ? (hasEndGap ? 'STATIONARY' : replayEndActivity)
     : 'N/A';
   events.push({
     tst: dayEndTst,
