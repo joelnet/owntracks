@@ -73,3 +73,15 @@ visit_detection:
 
 geocode:
   cache_radius_m: 100
+
+# Daily markdown location journal written into the Obsidian vault.
+# One note per day (YYYY-MM-DD-location.md), rewritten from the DB replay
+# whenever a POI / visit / activity transition fires, and finalized shortly
+# after local midnight.
+journal:
+  enabled: true
+  dir: /home/joel/vault/AI/journal
+  # Baseline places that never get a journal line — only trips away are logged.
+  exclude:
+    - Home
+  # timezone: America/Los_Angeles  # defaults to TZ env var, then LA

@@ -5,29 +5,29 @@ import { reverseGeocode } from './geocode.js';
 
 // --- Helpers ---
 
-function toLocalDate(tst, tz) {
+export function toLocalDate(tst, tz) {
   return new Date(tst * 1000).toLocaleDateString('en-CA', { timeZone: tz });
 }
 
-function toLocalTime(tst, tz) {
+export function toLocalTime(tst, tz) {
   return new Date(tst * 1000).toLocaleTimeString('en-US', {
     timeZone: tz, hour: 'numeric', minute: '2-digit', hour12: true,
   });
 }
 
-function formatDuration(seconds) {
+export function formatDuration(seconds) {
   const h = Math.floor(seconds / 3600);
   const m = Math.floor((seconds % 3600) / 60);
   if (h > 0) return `${h}h ${m}m`;
   return `${m}m`;
 }
 
-function fmtState(s) {
+export function fmtState(s) {
   if (!s || s === 'N/A') return s;
   return s.charAt(0) + s.slice(1).toLowerCase();
 }
 
-function adjacentDate(dateStr, offset) {
+export function adjacentDate(dateStr, offset) {
   const d = new Date(dateStr + 'T12:00:00Z');
   d.setUTCDate(d.getUTCDate() + offset);
   return d.toISOString().slice(0, 10);
@@ -49,7 +49,7 @@ function tzOffsetMs(date, tz) {
 // Returns the UTC unix timestamp (seconds) corresponding to 00:00:00 local time
 // of `dateStr` in `tz`. Two-pass to handle DST: the offset at our first guess
 // may differ from the offset at true local midnight (e.g. on fall-back days).
-function localMidnightTst(dateStr, tz) {
+export function localMidnightTst(dateStr, tz) {
   const utcMidnight = new Date(dateStr + 'T00:00:00Z').getTime();
   const firstOffset = tzOffsetMs(new Date(utcMidnight), tz);
   let guess = utcMidnight - firstOffset;
@@ -72,10 +72,11 @@ function createStaleTstTracker() {
 }
 
 /**
- * Generate a daily location/activity report.
- * Returns the report as a string, or null if no data found.
+ * Replay a day's stored points through the detectors and return structured
+ * day data (timeline events, per-place totals, activity totals, distances),
+ * or null if no data found. Shared by the text report and the vault journal.
  */
-export async function generateReport(date, config, db, timezone) {
+export async function buildDayData(date, config, db, timezone) {
   const tz = timezone || process.env.TZ || 'America/Los_Angeles';
 
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
@@ -276,11 +277,90 @@ export async function generateReport(date, config, db, timezone) {
 
   events.sort((a, b) => a.tst - b.tst || (a.type === 'start' ? -1 : b.type === 'start' ? 1 : 0));
 
-  // Build output
+  // Per-place time totals
+  const locationSpans = [];
+  const startEvent = events.find(e => e.type === 'start');
+  let currentLoc = startEvent.location;
+  let spanStart = dayStartTst;
+
+  for (const ev of events) {
+    if (ev.type === 'poi') {
+      locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
+      currentLoc = ev.location;
+      spanStart = ev.tst;
+    } else if (ev.type === 'visit') {
+      locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
+      currentLoc = ev.visitType === 'visit_started' ? ev.address : 'Roaming';
+      spanStart = ev.tst;
+    }
+  }
+  locationSpans.push({ location: currentLoc, start: spanStart, end: dayEndTst });
+
+  const totals = {};
+  for (const span of locationSpans) {
+    totals[span.location] = (totals[span.location] || 0) + (span.end - span.start);
+  }
+  const locationTotals = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+  // Per-activity-state time totals
+  let activityTotals = null;
+  if (activity) {
+    const activitySpans = [];
+    let currentAct = events[0].activity || events[0].state || 'UNKNOWN';
+    let actSpanStart = dayStartTst;
+
+    for (const ev of events) {
+      if (ev.type === 'activity') {
+        activitySpans.push({ state: currentAct, start: actSpanStart, end: ev.tst });
+        currentAct = ev.state;
+        actSpanStart = ev.tst;
+      }
+    }
+    activitySpans.push({ state: currentAct, start: actSpanStart, end: dayEndTst });
+
+    const actTotals = {};
+    for (const span of activitySpans) {
+      actTotals[span.state] = (actTotals[span.state] || 0) + (span.end - span.start);
+    }
+    activityTotals = Object.entries(actTotals).sort((a, b) => b[1] - a[1]);
+  }
+
+  return {
+    tz,
+    date,
+    events,
+    pointCount: dayEntries.length,
+    dayStartTst,
+    dayEndTst,
+    // True while `date` is still in progress — dayEndTst is "now", not 11:59 PM.
+    ongoing: nowTst < nextMidnightTst,
+    distanceByState,
+    locationSpans,
+    locationTotals,
+    activityTotals,
+  };
+}
+
+export function formatDistance(meters, distanceUnit) {
+  const useMiles = distanceUnit !== 'kilometers';
+  const value = meters / (useMiles ? 1609.344 : 1000);
+  const unit = useMiles ? 'mi' : 'km';
+  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
+}
+
+/**
+ * Generate a daily location/activity report.
+ * Returns the report as a string, or null if no data found.
+ */
+export async function generateReport(date, config, db, timezone) {
+  const day = await buildDayData(date, config, db, timezone);
+  if (!day) return null;
+
+  const { tz, events } = day;
   const lines = [];
 
   lines.push(`Location Report: ${date}`);
-  lines.push(`Timezone: ${tz}  |  Data points: ${dayEntries.length}`);
+  lines.push(`Timezone: ${tz}  |  Data points: ${day.pointCount}`);
   lines.push('='.repeat(50));
   lines.push('');
 
@@ -319,64 +399,20 @@ export async function generateReport(date, config, db, timezone) {
   lines.push('Location Summary');
   lines.push('-'.repeat(30));
 
-  const locationSpans = [];
-  const startEvent = events.find(e => e.type === 'start');
-  let currentLoc = startEvent.location;
-  let spanStart = dayStartTst;
-
-  for (const ev of events) {
-    if (ev.type === 'poi') {
-      locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
-      currentLoc = ev.location;
-      spanStart = ev.tst;
-    } else if (ev.type === 'visit') {
-      locationSpans.push({ location: currentLoc, start: spanStart, end: ev.tst });
-      currentLoc = ev.visitType === 'visit_started' ? ev.address : 'Roaming';
-      spanStart = ev.tst;
-    }
-  }
-  locationSpans.push({ location: currentLoc, start: spanStart, end: dayEndTst });
-
-  const totals = {};
-  for (const span of locationSpans) {
-    totals[span.location] = (totals[span.location] || 0) + (span.end - span.start);
-  }
-
-  for (const [loc, secs] of Object.entries(totals).sort((a, b) => b[1] - a[1])) {
+  for (const [loc, secs] of day.locationTotals) {
     lines.push(`  ${loc.padEnd(20)} ${formatDuration(secs)}`);
   }
 
   // Activity summary
-  if (activity) {
+  if (day.activityTotals) {
     lines.push('');
     lines.push('Activity Summary');
     lines.push('-'.repeat(30));
 
-    const activitySpans = [];
-    let currentAct = events[0].activity || events[0].state || 'UNKNOWN';
-    let actSpanStart = dayStartTst;
-
-    for (const ev of events) {
-      if (ev.type === 'activity') {
-        activitySpans.push({ state: currentAct, start: actSpanStart, end: ev.tst });
-        currentAct = ev.state;
-        actSpanStart = ev.tst;
-      }
-    }
-    activitySpans.push({ state: currentAct, start: actSpanStart, end: dayEndTst });
-
-    const actTotals = {};
-    for (const span of activitySpans) {
-      actTotals[span.state] = (actTotals[span.state] || 0) + (span.end - span.start);
-    }
-
-    for (const [state, secs] of Object.entries(actTotals).sort((a, b) => b[1] - a[1])) {
+    for (const [state, secs] of day.activityTotals) {
       let line = `  ${fmtState(state).padEnd(20)} ${formatDuration(secs)}`;
-      if (state === 'DRIVING' && distanceByState.DRIVING) {
-        const useMiles = config.distance_unit !== 'kilometers';
-        const value = distanceByState.DRIVING / (useMiles ? 1609.344 : 1000);
-        const unit = useMiles ? 'mi' : 'km';
-        line += `  (${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit})`;
+      if (state === 'DRIVING' && day.distanceByState.DRIVING) {
+        line += `  (${formatDistance(day.distanceByState.DRIVING, config.distance_unit)})`;
       }
       lines.push(line);
     }

@@ -120,5 +120,13 @@ export function loadConfig(filePath) {
     if (typeof geocode.cache_radius_m !== 'number' || geocode.cache_radius_m <= 0) throw new Error('geocode.cache_radius_m must be a positive number');
   }
 
+  if (config.journal !== undefined) {
+    const { journal } = config;
+    if (typeof journal.enabled !== 'boolean') throw new Error('journal.enabled must be a boolean');
+    if (typeof journal.dir !== 'string' || journal.dir.length === 0) throw new Error('journal.dir must be a non-empty string');
+    if (journal.timezone !== undefined && typeof journal.timezone !== 'string') throw new Error('journal.timezone must be a string');
+    if (journal.exclude !== undefined && (!Array.isArray(journal.exclude) || journal.exclude.some(e => typeof e !== 'string'))) throw new Error('journal.exclude must be an array of strings');
+  }
+
   return config;
 }

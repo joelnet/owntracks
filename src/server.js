@@ -11,6 +11,7 @@ import { createDiscordClient } from "./lib/discord.js";
 import { createActivityDetector } from "./lib/activity.js";
 import { createVisitDetector } from "./lib/visit.js";
 import { reverseGeocode as nominatimGeocode } from "./lib/geocode.js";
+import { createJournal } from "./lib/journal.js";
 import { openDatabase, initSchema } from "./lib/db.js";
 
 function safeEqual(a, b) {
@@ -19,7 +20,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode } = {}) {
+export function createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode, journal } = {}) {
   const app = express();
   let lastProcessedTst = null;
 
@@ -89,6 +90,9 @@ export function createApp({ username, password, store, detector, discord, activi
       lastProcessedTst = entry.tst;
     }
 
+    // Any POI/activity/visit transition marks the vault journal stale.
+    let journalStale = false;
+
     // POI detection
     if (
       detector &&
@@ -97,6 +101,7 @@ export function createApp({ username, password, store, detector, discord, activi
     ) {
       const result = detector.detect(entry.lat, entry.lon, effectiveTst, entry.vel);
       if (result.changed) {
+        journalStale = true;
         if (result.immediate) {
           log.info(`Immediate arrival fast path fired: ${result.location}`);
         }
@@ -121,6 +126,7 @@ export function createApp({ username, password, store, detector, discord, activi
       const activityResult = activity.update(entry.lat, entry.lon, effectiveTst, entry.vel);
 
       if (activityResult.changed || activityResult.initialClassification || activityResult.gapTransition) {
+        journalStale = true;
         if (onActivityPersist) {
           try {
             onActivityPersist(activity.getFullState());
@@ -148,6 +154,7 @@ export function createApp({ username, password, store, detector, discord, activi
       ) {
         const forceResult = detector.forceResolve(entry.lat, entry.lon);
         if (forceResult.changed) {
+          journalStale = true;
           log.location(`Location: ${forceResult.location}`);
           if (discord) {
             const message = forceResult.location === 'Roaming'
@@ -173,6 +180,7 @@ export function createApp({ username, password, store, detector, discord, activi
         poiResult,
         activityState
       );
+      if (visitResult) journalStale = true;
 
       // Geocode and rename learned POI before persisting
       let geocodedAddress = null;
@@ -223,6 +231,9 @@ export function createApp({ username, password, store, detector, discord, activi
 
     store.appendEntry(entry);
     log.info(`Entry saved: user=${user} device=${device} type=${entry.type}`);
+
+    // After appendEntry so the journal's day replay includes this point.
+    if (journal && journalStale) journal.scheduleUpdate();
 
     return res.status(200).json([]);
   });
@@ -389,8 +400,16 @@ if (isDirectRun) {
     reverseGeocode = (lat, lon) => nominatimGeocode(lat, lon, { db, cacheRadiusM: geocodeCacheRadiusM });
   }
 
+  // Initialize vault journal writer (optional)
+  let journal;
+  if (config.journal?.enabled) {
+    journal = createJournal({ config, db });
+    journal.start();
+    log.info(`Journal enabled: ${config.journal.dir}`);
+  }
+
   const maxAccuracy = config.max_accuracy_m;
-  const app = createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode });
+  const app = createApp({ username, password, store, detector, discord, activity, activityConfig, onActivityPersist, visit, visitConfig, onVisitPersist, maxAccuracy, reverseGeocode, journal });
   const server = app.listen(port, () => {
     log.info(`Server started on port ${port}`);
   });
@@ -412,6 +431,10 @@ if (isDirectRun) {
     forceCloseTimer.unref();
 
     try {
+      if (journal) {
+        journal.stop();
+      }
+
       if (discord) {
         await discord.destroy();
       }
