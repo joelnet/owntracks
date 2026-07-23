@@ -24,6 +24,17 @@ export function createApp({ username, password, store, detector, discord, activi
   const app = express();
   let lastProcessedTst = null;
 
+  // The real Discord client resolves tenant prompts and per-day labels for
+  // arrivals/departures; bare test doubles only implement notify().
+  const announceArrival = (location, tst) => {
+    if (discord.notifyArrival) discord.notifyArrival(location, tst);
+    else discord.notify(`Arrived at ${location}`);
+  };
+  const announceDeparture = (location) => {
+    if (discord.notifyDeparture) discord.notifyDeparture(location);
+    else discord.notify(`Left ${location} (now Roaming)`);
+  };
+
   app.use(express.json());
 
   // Health check (unauthenticated) for uptime monitoring (Uptime Kuma).
@@ -108,10 +119,8 @@ export function createApp({ username, password, store, detector, discord, activi
         log.location(`Location: ${result.location}`);
 
         if (discord) {
-          const message = result.location === 'Roaming'
-            ? `Left ${result.previousLocation} (now Roaming)`
-            : `Arrived at ${result.location}`;
-          discord.notify(message);
+          if (result.location === 'Roaming') announceDeparture(result.previousLocation);
+          else announceArrival(result.location, effectiveTst);
         }
       }
     }
@@ -157,10 +166,8 @@ export function createApp({ username, password, store, detector, discord, activi
           journalStale = true;
           log.location(`Location: ${forceResult.location}`);
           if (discord) {
-            const message = forceResult.location === 'Roaming'
-              ? `Left ${forceResult.previousLocation} (now Roaming)`
-              : `Arrived at ${forceResult.location}`;
-            discord.notify(message);
+            if (forceResult.location === 'Roaming') announceDeparture(forceResult.previousLocation);
+            else announceArrival(forceResult.location, effectiveTst);
           }
         }
       }
@@ -359,19 +366,22 @@ if (isDirectRun) {
       [...configuredPois, ...learnedPois].flatMap(p => poiAnchors(p, config.poi.default_radius_m))
     );
 
-    const upsertPoi = db.prepare(`
-      INSERT OR REPLACE INTO learned_pois (id, name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)
-      VALUES (@id, @name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at)
-    `);
     const deletePois = db.prepare('DELETE FROM learned_pois');
     const insertPoi = db.prepare(`
-      INSERT INTO learned_pois (name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at)
-      VALUES (@name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at)
+      INSERT INTO learned_pois (name, address, lat, lon, radius_m, discovered_at, visit_count, last_visited_at, tenants)
+      VALUES (@name, @address, @lat, @lon, @radius_m, @discovered_at, @visit_count, @last_visited_at, @tenants)
     `);
     const syncPois = db.transaction((pois) => {
       deletePois.run();
       for (const poi of pois) {
-        insertPoi.run(poi);
+        // In-memory tenants may be a parsed array (after a Discord tenant
+        // pick) or still the JSON string loaded from the DB at boot.
+        insertPoi.run({
+          ...poi,
+          tenants: poi.tenants == null ? null
+            : typeof poi.tenants === 'string' ? poi.tenants
+            : JSON.stringify(poi.tenants),
+        });
       }
     });
 
@@ -381,15 +391,24 @@ if (isDirectRun) {
     };
   }
 
+  // Initialize vault journal writer (optional). Created before Discord so
+  // tenant picks and renames can rewrite the affected day's note immediately.
+  let journal;
+  if (config.journal?.enabled) {
+    journal = createJournal({ config, db });
+    journal.start();
+    log.info(`Journal enabled: ${config.journal.dir}`);
+  }
+
   // Initialize Discord bot (optional). Created after the visit detector so
-  // reply-to-correct can rename learned POIs in the live detector.
+  // reply-to-correct can update learned POIs in the live detector.
   let discord;
   const discordToken = process.env.DISCORD_TOKEN;
   const discordChannelId = process.env.DISCORD_CHANNEL_ID;
   const discordGuildId = process.env.DISCORD_GUILD_ID;
 
   if (discordToken && discordChannelId && discordGuildId) {
-    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, db, visit });
+    discord = createDiscordClient({ token: discordToken, channelId: discordChannelId, guildId: discordGuildId, detector, config, db, visit, journal });
     discord.start().catch(err => log.error(`Discord failed to connect: ${err.message}`));
   }
 
@@ -398,14 +417,6 @@ if (isDirectRun) {
   if (config.geocode) {
     const geocodeCacheRadiusM = config.geocode.cache_radius_m;
     reverseGeocode = (lat, lon) => nominatimGeocode(lat, lon, { db, cacheRadiusM: geocodeCacheRadiusM });
-  }
-
-  // Initialize vault journal writer (optional)
-  let journal;
-  if (config.journal?.enabled) {
-    journal = createJournal({ config, db });
-    journal.start();
-    log.info(`Journal enabled: ${config.journal.dir}`);
   }
 
   const maxAccuracy = config.max_accuracy_m;

@@ -401,3 +401,24 @@ describe('createVisitDetector — state persistence', () => {
     assert.equal(v.getState().anchor.lat, ANCHOR.lat);
   });
 });
+
+describe('createVisitDetector — learned POI tenants', () => {
+  it('setLearnedPoiTenants round-trips through getLearnedPois', () => {
+    const v = createVisitDetector(makeConfig());
+    v.loadLearnedPois([{ name: 'Starbucks', lat: 34.017, lon: -117.903, radius_m: 100 }]);
+    const tenants = [
+      { name: 'Starbucks', visit_count: 1, last_selected_at: null },
+      { name: 'Nail Salon', visit_count: 2, last_selected_at: '2026-07-23T18:00:00.000Z' },
+    ];
+    // Slightly drifted coordinates still match the anchor.
+    v.setLearnedPoiTenants(34.0173, -117.9032, tenants);
+    assert.deepEqual(v.getLearnedPois()[0].tenants, tenants);
+  });
+
+  it('setLearnedPoiTenants ignores coordinates matching no anchor', () => {
+    const v = createVisitDetector(makeConfig());
+    v.loadLearnedPois([{ name: 'Starbucks', lat: 34.017, lon: -117.903, radius_m: 100 }]);
+    v.setLearnedPoiTenants(35.0, -118.0, [{ name: 'X', visit_count: 1 }]);
+    assert.equal(v.getLearnedPois()[0].tenants, undefined);
+  });
+});

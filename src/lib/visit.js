@@ -228,5 +228,14 @@ export function createVisitDetector(config, savedState) {
         poi.address = name;
       }
     },
+    // Replace the tenant list on a learned POI (multi-business anchor) so the
+    // next persist — which rebuilds learned_pois from this in-memory list —
+    // keeps it.
+    setLearnedPoiTenants(lat, lon, tenants) {
+      const poi = learnedPois.find(p =>
+        Math.abs(p.lat - lat) < 0.001 && Math.abs(p.lon - lon) < 0.001
+      );
+      if (poi) poi.tenants = tenants.map(t => ({ ...t }));
+    },
   };
 }

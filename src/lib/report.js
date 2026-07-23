@@ -2,6 +2,7 @@ import { createPOIDetector, haversineDistance, poiAnchors } from './poi.js';
 import { createActivityDetector } from './activity.js';
 import { createVisitDetector } from './visit.js';
 import { reverseGeocode } from './geocode.js';
+import { applyDisplayNames } from './tenants.js';
 
 // --- Helpers ---
 
@@ -82,6 +83,11 @@ export async function buildDayData(date, config, db, timezone) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
     return null;
   }
+
+  // Substitute the day's picked tenant labels (and default tenant names) for
+  // multi-business anchors before the replay, so events, stays, and totals
+  // all carry the corrected names.
+  config = applyDisplayNames(config, db, date);
 
   const maxAccuracy = config.max_accuracy_m;
 

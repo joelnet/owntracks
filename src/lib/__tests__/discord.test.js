@@ -67,6 +67,33 @@ describe('parseLocationName', () => {
   });
 });
 
+describe('parseLocationMessage', () => {
+  it('classifies visit-flow messages as christening kinds', async () => {
+    const { parseLocationMessage } = await import('../discord.js');
+    assert.deepEqual(
+      parseLocationMessage('POI Lookup at Some Place, 123 Main St'),
+      { kind: 'poi_lookup', name: 'Some Place, 123 Main St' }
+    );
+    assert.deepEqual(
+      parseLocationMessage('Left Some Place — 42 min visit'),
+      { kind: 'visit_left', name: 'Some Place' }
+    );
+  });
+
+  it('classifies POI-flow messages as established kinds', async () => {
+    const { parseLocationMessage } = await import('../discord.js');
+    assert.equal(parseLocationMessage('Arrived at Target').kind, 'arrival');
+    assert.equal(parseLocationMessage('Left Target (now Roaming)').kind, 'poi_left');
+    assert.equal(parseLocationMessage('Currently at Target').kind, 'current');
+  });
+
+  it('returns null for non-location messages', async () => {
+    const { parseLocationMessage } = await import('../discord.js');
+    assert.equal(parseLocationMessage('Now Driving'), null);
+    assert.equal(parseLocationMessage(undefined), null);
+  });
+});
+
 describe('isRoamingLocationMessage', () => {
   it('matches the /location Roaming response', async () => {
     const { isRoamingLocationMessage, ROAMING_LOCATION_MESSAGE } = await import('../discord.js');

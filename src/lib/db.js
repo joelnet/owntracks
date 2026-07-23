@@ -45,6 +45,29 @@ export function initSchema(db) {
     )
   `);
 
+  // Multi-business anchors (strip malls): JSON list of tenant names with pick
+  // counts. Added after the initial schema, so migrate existing DBs in place.
+  const poiColumns = db.prepare('PRAGMA table_info(learned_pois)').all();
+  if (!poiColumns.some(c => c.name === 'tenants')) {
+    db.exec('ALTER TABLE learned_pois ADD COLUMN tenants JSON');
+  }
+
+  // Which business a day's visit to an anchor was actually to. `date` is a
+  // local-day bucket key (YYYY-MM-DD in the journal timezone); anchors are
+  // matched by proximity because learned_pois ids are unstable (delete-all +
+  // reinsert persist).
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS visit_labels (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      lat REAL NOT NULL,
+      lon REAL NOT NULL,
+      date TEXT NOT NULL,
+      label TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )
+  `);
+  db.exec('CREATE INDEX IF NOT EXISTS idx_visit_labels_date ON visit_labels(date)');
+
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_state (
       key TEXT PRIMARY KEY,
